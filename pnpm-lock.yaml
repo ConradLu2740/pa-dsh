@@ -32,6 +32,10 @@ importers:
         version: 5.9.3
 
   packages/dsh-proactive-daily:
+    dependencies:
+      '@proactive-agent/dsh-proactive-core':
+        specifier: ^0.1.0
+        version: 0.1.0(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/schemastery@3.18.1)
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: ^4.0.1
@@ -50,6 +54,10 @@ importers:
         version: 5.9.3
 
   packages/dsh-proactive-injector:
+    dependencies:
+      '@proactive-agent/dsh-proactive-core':
+        specifier: ^0.1.0
+        version: 0.1.0(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/schemastery@3.18.1)
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: ^4.0.1
@@ -71,6 +79,10 @@ importers:
         version: 5.9.3
 
   packages/dsh-proactive-memory:
+    dependencies:
+      '@proactive-agent/dsh-proactive-core':
+        specifier: ^0.1.0
+        version: 0.1.0(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/schemastery@3.18.1)
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: ^4.0.1
@@ -92,6 +104,10 @@ importers:
         version: 5.9.3
 
   packages/dsh-proactive-skills:
+    dependencies:
+      '@proactive-agent/dsh-proactive-core':
+        specifier: ^0.1.0
+        version: 0.1.0(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/schemastery@3.18.1)
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: ^4.0.1
@@ -110,6 +126,10 @@ importers:
         version: 5.9.3
 
   packages/dsh-proactive-suggest:
+    dependencies:
+      '@proactive-agent/dsh-proactive-core':
+        specifier: ^0.1.0
+        version: 0.1.0(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/schemastery@3.18.1)
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: ^4.0.1
@@ -414,6 +434,12 @@ packages:
     resolution: {integrity: sha512-S4JLD/5c/RhVMieDDZYmxTImOmICdDB2o2GT0KfyhOkFxyH+9Ll2tISgguyEx60/B8pL1tYl+DiAFfBzC8aa4Q==}
     engines: {node: '>=18'}
 
+  '@proactive-agent/dsh-proactive-core@0.1.0':
+    resolution: {integrity: sha512-IDHEaTyHDkqPhvozxaJwQSJrCmE1VwuJMxZwUeCJGaUqyFVPC9KVG3bNWHfoMY9Q/rCHcET74FhHC+19s2tXmw==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ^4.0.1
+      '@deepseek-ai/schemastery': ^3.18.0
+
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
@@ -622,6 +648,12 @@ snapshots:
     optional: true
 
   '@proactive-agent/core@0.9.2': {}
+
+  '@proactive-agent/dsh-proactive-core@0.1.0(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/schemastery@3.18.1)':
+    dependencies:
+      '@deepseek-ai/cordis': 4.0.1
+      '@deepseek-ai/schemastery': 3.18.1
+      '@proactive-agent/core': 0.9.2
 
   '@standard-schema/spec@1.1.0': {}
 
