@@ -1,0 +1,11 @@
+# 依赖与构建产物
+node_modules/
+*.log
+.DS_Store
+
+# dsh 运行
+.dsh-run/
+
+# npm 临时
+*.tgz
+npm-debug.log*
