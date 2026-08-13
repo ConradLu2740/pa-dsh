@@ -1,0 +1,75 @@
+name: Publish npm
+
+# 手动触发发布：GitHub → Actions → Publish npm → Run workflow
+#
+# 注意：npm 账号 2FA 是 WebAuthn 时，npm publish 需要交互授权，CI 无法完成。
+# 若要让 CI 发布，请在仓库 Secrets 添加 NPM_TOKEN（npmjs.com 生成的 Granular
+# Access Token，勾选 Publish 权限；若 npm 仍要求 2FA 会失败，则改回本地
+# `bash scripts/publish.sh` 发布）。
+#
+# 版本号：默认读取 package.json 的 core 版本；发布前请先本地 `npm version patch`
+# 提升版本并 push（或改本 workflow 用 release 分支触发）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '发布版本（如 0.1.1）；留空则按 patch 提示'
+        required: false
+        default: ''
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all plugins
+        run: node scripts/build.mjs
+
+      - name: Bump version (all packages)
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          for d in packages/dsh-proactive-*; do
+            if [ -n "$VERSION" ]; then
+              (cd "$d" && npm version "$VERSION" --no-git-tag-version --no-commit-hooks)
+            else
+              (cd "$d" && npm version patch --no-git-tag-version --no-commit-hooks)
+            fi
+          done
+
+      - name: Sync consumer peerDependency on core
+        run: |
+          CORE_VERSION=$(node -p "require('./packages/dsh-proactive-core/package.json').version")
+          for d in dsh-proactive-memory dsh-proactive-suggest dsh-proactive-injector dsh-proactive-daily dsh-proactive-skills; do
+            node -e "
+              const fs = require('fs');
+              const p = 'packages/$d/package.json';
+              const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+              j.peerDependencies['@proactive-agent/dsh-proactive-core'] = '^$CORE_VERSION';
+              fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+            "
+          done
+          echo "core=$CORE_VERSION"
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for d in dsh-proactive-core dsh-proactive-memory dsh-proactive-suggest dsh-proactive-injector dsh-proactive-daily dsh-proactive-skills; do
+            echo ">>> publish $d"
+            (cd "packages/$d" && npm publish --access public)
+          done

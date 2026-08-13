@@ -4,6 +4,49 @@
 做成 DeepSeek Harness（dsh）的 cordis 插件组。**引擎零重写**，全部复用
 `@proactive-agent/core`，通过 cordis 服务注入。
 
+## 架构
+
+```mermaid
+graph TB
+    subgraph dsh[DeepSeek Harness 宿主]
+        EV[会话事件流 session/event]
+        TOOLS[工具注册 ctx.tools]
+        PROMPT[系统提示词 systemPrompt]
+        SKILLS[技能目录 ctx.skills]
+        SESSIONS[会话 Store ctx.sessions]
+    end
+
+    CORE[dsh-proactive-core<br/>paCore 服务<br/>@proactive-agent/core 进程内单例]
+
+    MEM[dsh-proactive-memory<br/>memory_capture / recall / stats<br/>+ persona 提示词段]
+    SUG[dsh-proactive-suggest<br/>事件 → evaluateNow 五触发器<br/>+ suggest_now 工具]
+    INJ[dsh-proactive-injector<br/>建议箱通知投递<br/>suggest_list / accept / dismiss]
+    DAI[dsh-proactive-daily<br/>每日 09:30 定时评估<br/>daily_review 工具]
+    SKI[dsh-proactive-skills<br/>sop 记忆 → pa-sop-N skills]
+
+    CORE -. paCore 服务注入 .-> MEM
+    CORE -. paCore 服务注入 .-> SUG
+    CORE -. paCore 服务注入 .-> INJ
+    CORE -. paCore 服务注入 .-> DAI
+    CORE -. paCore 服务注入 .-> SKI
+
+    EV -- session/created/turn/end/disposed --> SUG
+    SUG -- pa/suggestion 事件 --> INJ
+    INJ -- session.append 通知 --> SESSIONS
+    MEM -- persona 段 --> PROMPT
+    SUG -- suggest_now --> TOOLS
+    INJ -- 建议箱工具 --> TOOLS
+    DAI -- daily_review --> TOOLS
+    SKI -- registerProvider --> SKILLS
+    SUG -- 建议落库 --> CORE
+    INJ -- accept/dismiss 反馈 --> CORE
+```
+
+**事件流**：dsh 会话事件（`session/created` → `session_start` 存量推送；`turn/end` →
+`session_mid` 强信号建议；`session/disposed` → `session_end` 完整评估；`suggest_now` →
+`manual`；每日定时 → `timer`）→ suggest 插件评估 → `pa/suggestion` 事件 → injector
+投递建议箱通知 → 用户接受/忽略 → 反馈回流 core（状态、类型权重持久化）。
+
 ## 插件一览（已发布 npm，v0.1.0）
 
 | 包 | 职责 |
