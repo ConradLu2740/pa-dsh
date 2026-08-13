@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all plugins
+        run: node scripts/build.mjs
+
+      - name: Verify plugin exports
+        run: |
+          for d in packages/dsh-proactive-*; do
+            node -e "import('./$d/lib/index.js').then(m => { const ok = ['name','apply'].every(k => k in m); if (!ok) { console.error('$d missing exports', Object.keys(m)); process.exit(1) } console.log('OK $d', Object.keys(m).join(',')) })"
+          done
