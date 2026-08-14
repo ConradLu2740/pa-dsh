@@ -43,8 +43,10 @@ export const Config = z.object({
   manualTool: z.boolean().default(true),
   /** 每会话最多保留的消息数（喂给评估器） */
   maxMessages: z.number().default(40),
-  /** 评估失败静默（true）还是往日志打 warn */
-  silentErrors: z.boolean().default(true),
+  /** 收集器最多跟踪的会话数（防长期运行泄漏） */
+  maxCollectorSessions: z.number().default(20),
+  /** 评估失败是否静默（默认 false：错误应可见，便于排查） */
+  silentErrors: z.boolean().default(false),
 })
 
 type PluginConfig = z.infer<typeof Config>
@@ -79,6 +81,12 @@ export function apply(ctx: Context, config: PluginConfig) {
     if (!list) {
       list = []
       collectors.set(sessionId, list)
+      // 容量上限：超出时淘汰最旧会话条目（防长跑泄漏）
+      const maxSessions = cfg.maxCollectorSessions ?? 20
+      if (collectors.size > maxSessions) {
+        const oldest = collectors.keys().next().value
+        if (oldest !== undefined) collectors.delete(oldest)
+      }
     }
     list.push(msg)
     if (cfg.maxMessages > 0 && list.length > cfg.maxMessages) {
@@ -175,7 +183,8 @@ export function apply(ctx: Context, config: PluginConfig) {
           render: (_args: unknown, value: string) => [{ type: 'text', text: value }],
         },
         execute: async () => {
-          const sid = lastSessionId
+          // lastSessionId 防御：会话已销毁时退化为无会话全局评估，避免取到过期上下文
+          const sid = lastSessionId !== undefined && collectors.has(lastSessionId) ? lastSessionId : undefined
           const records = await evaluate('manual', sid)
           if (records.length === 0) return '💤 本次评估没有产生新建议（可能被降噪/预算/DND 抑制）'
           const lines = records.map(

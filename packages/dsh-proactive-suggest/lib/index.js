@@ -14,8 +14,10 @@ var Config = z.object({
   manualTool: z.boolean().default(true),
   /** 每会话最多保留的消息数（喂给评估器） */
   maxMessages: z.number().default(40),
-  /** 评估失败静默（true）还是往日志打 warn */
-  silentErrors: z.boolean().default(true)
+  /** 收集器最多跟踪的会话数（防长期运行泄漏） */
+  maxCollectorSessions: z.number().default(20),
+  /** 评估失败是否静默（默认 false：错误应可见，便于排查） */
+  silentErrors: z.boolean().default(false)
 });
 function extractText(content) {
   if (typeof content === "string") return content;
@@ -34,6 +36,11 @@ function apply(ctx, config) {
     if (!list) {
       list = [];
       collectors.set(sessionId, list);
+      const maxSessions = cfg.maxCollectorSessions ?? 20;
+      if (collectors.size > maxSessions) {
+        const oldest = collectors.keys().next().value;
+        if (oldest !== void 0) collectors.delete(oldest);
+      }
     }
     list.push(msg);
     if (cfg.maxMessages > 0 && list.length > cfg.maxMessages) {
@@ -112,7 +119,7 @@ function apply(ctx, config) {
           render: (_args, value) => [{ type: "text", text: value }]
         },
         execute: async () => {
-          const sid = lastSessionId;
+          const sid = lastSessionId !== void 0 && collectors.has(lastSessionId) ? lastSessionId : void 0;
           const records = await evaluate("manual", sid);
           if (records.length === 0) return "\u{1F4A4} \u672C\u6B21\u8BC4\u4F30\u6CA1\u6709\u4EA7\u751F\u65B0\u5EFA\u8BAE\uFF08\u53EF\u80FD\u88AB\u964D\u566A/\u9884\u7B97/DND \u6291\u5236\uFF09";
           const lines = records.map(

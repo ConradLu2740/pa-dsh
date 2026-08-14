@@ -6,15 +6,43 @@ var inject = ["tools", "systemPrompt"];
 var Config = z.object({
   /** persona 段在提示词中的顺序（0 为部署 persona） */
   personaOrder: z.number().default(5),
+  /** 画像长度上限（字符），超长截断防 token 爆炸 */
+  personaMaxChars: z.number().default(3e3),
+  /** capture 后异步刷新画像（防 stale） */
+  refreshPersonaOnCapture: z.boolean().default(true),
+  /** 每轮记忆上下文注入（systemPrompt.context 动态求值） */
+  recallContext: z.boolean().default(true),
+  /** 记忆上下文注入条数（交给 contextForMessage 的 limit） */
+  recallContextLimit: z.number().default(5),
   /** 工具是否启用 */
   captureTool: z.boolean().default(true),
   recallTool: z.boolean().default(true),
   statsTool: z.boolean().default(true)
 });
 var MEMORY_TYPES = ["fact", "preference", "correction", "sop", "todo_context", "event"];
+function extractText(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.filter((b) => b && b.type === "text" && typeof b.text === "string").map((b) => b.text).join("\n");
+  }
+  return "";
+}
 function apply(ctx, config) {
   const cfg = { ...config };
   const { memoryService } = ctx.get("paCore");
+  const latestUserText = /* @__PURE__ */ new Map();
+  ctx.on("session/event", (session, event) => {
+    if (event?.type !== "user/message") return;
+    const data = event.data;
+    if (data?.source?.kind === "plugin") return;
+    const text = extractText(data?.content);
+    const sid = String(session?.id ?? "");
+    if (sid && text.trim()) latestUserText.set(sid, text.trim());
+  });
+  ctx.on("session/disposed", (session) => {
+    const sid = String(session?.id ?? "");
+    if (sid) latestUserText.delete(sid);
+  });
   if (cfg.captureTool !== false) {
     ctx.tools.register(
       defineTool({
@@ -37,7 +65,7 @@ function apply(ctx, config) {
           schema: { type: "string" },
           render: (_args, value) => [{ type: "text", text: value }]
         },
-        execute(args) {
+        execute: async (args) => {
           const content = String(args.content ?? "").trim();
           if (!content) return "\u274C \u8BB0\u5FC6\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A";
           const type = MEMORY_TYPES.includes(String(args.type)) ? args.type : "fact";
@@ -49,6 +77,10 @@ function apply(ctx, config) {
               { scope },
               { confirmed: true }
             );
+            if (cfg.refreshPersonaOnCapture !== false) {
+              void Promise.resolve(memoryService.regeneratePersona?.()).catch(() => {
+              });
+            }
             const verb = result.deduplicated ? "\u5DF2\u5408\u5E76\u8FDB\u5DF2\u6709\u8BB0\u5FC6" : "\u5DF2\u8BB0\u4F4F";
             return `\u2705 ${verb} [${result.atom.type}]\uFF08${result.atom.scope ?? scope} \u5C42\uFF0C\u4F18\u5148\u7EA7 ${result.atom.priority ?? 50}\uFF09:
 ${result.atom.content}`;
@@ -138,16 +170,37 @@ ${lines.join("\n")}`;
       try {
         const personaText = memoryService.personaRaw("auto");
         if (!personaText) return "";
+        const max = Math.max(0, cfg.personaMaxChars ?? 3e3);
+        const capped = personaText.length > max ? `${personaText.slice(0, max)}
+\u2026\uFF08\u753B\u50CF\u8FC7\u957F\u5DF2\u622A\u65AD\uFF0C\u5B8C\u6574\u753B\u50CF\u53EF\u7528 memory_stats \u67E5\u770B\uFF09` : personaText;
         return `# \u7528\u6237\u753B\u50CF\uFF08ProactiveAgent \u957F\u671F\u8BB0\u5FC6\uFF09
 
-${personaText}
+${capped}
 
-\u4EE5\u4E0A\u753B\u50CF\u6765\u81EA\u8DE8\u5DE5\u5177\u5171\u4EAB\u7684\u957F\u671F\u8BB0\u5FC6\u5E93\uFF0C\u4F9B\u4F60\u7406\u89E3\u7528\u6237\u504F\u597D\u65F6\u53C2\u8003\u3002`;
+\u4EE5\u4E0A\u753B\u50CF\u6765\u81EA\u8DE8\u5DE5\u5177\u5171\u4EAB\u7684\u957F\u671F\u8BB0\u5FC6\u5E93\uFF0C\u4F9B\u4F60\u7406\u89E3\u7528\u6237\u504F\u597D\u65F6\u53C2\u8003\uFF1B\u82E5\u753B\u50CF\u4E0E\u7528\u6237\u5F53\u524D\u8BF4\u6CD5\u51B2\u7A81\uFF0C\u4EE5\u7528\u6237\u5F53\u524D\u8BF4\u6CD5\u4E3A\u51C6\u3002`;
       } catch {
         return "";
       }
     }
   });
+  if (cfg.recallContext !== false) {
+    ctx.systemPrompt.context({
+      name: "pa:recall",
+      order: 200,
+      text: (assembleCtx) => {
+        try {
+          const agent = assembleCtx?.agent;
+          const sid = agent?.session?.id ? String(agent.session.id) : "";
+          const userText = sid ? latestUserText.get(sid) ?? "" : "";
+          if (!userText) return "";
+          const memoryBlock = memoryService.contextForMessage(userText, { limit: cfg.recallContextLimit ?? 5 });
+          return memoryBlock || "";
+        } catch {
+          return "";
+        }
+      }
+    });
+  }
 }
 export {
   Config,
