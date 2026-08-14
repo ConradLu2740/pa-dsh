@@ -4,14 +4,15 @@
  * ProactiveAgent 建议箱 + 反馈闭环插件（DeepSeek Harness cordis 插件）
  *
  * 职责：
- * 1. 消费 suggest 插件广播的 `pa/suggestion` 事件
- * 2. 建议箱投递：往会话流 append 一条可见通知消息（含建议详情 + 处理指引）
- *    —— 通知文本明确声明"请勿自行处理，除非用户明确要求"，用户保留主权
- * 3. 反馈工具：suggest_list / suggest_accept / suggest_dismiss
+ * 1. 建议箱可见性：systemPrompt.context 动态注入一行摘要
+ *    —— 只告诉模型"有 N 条待处理建议 + 处理工具"，不把建议详情塞进模型上下文
+ *    （S1' 投递降噪：废弃 v0.1.x 的 session.append 通知，实测其会干扰模型、
+ *    被误当用户指令、永久污染会话日志）
+ * 2. 反馈工具：suggest_list / suggest_accept / suggest_dismiss
  *    —— accept 走 PA 引擎 handleSuggestionFeedback（M6 接受即执行：
  *       correction 写入纠正记忆并刷新画像；automation/todo 降级为指令）
  *
- * 注：Phase 3 将把建议箱通知升级为 turnTail UI 卡（不进模型上下文）。
+ * 注：建议详情卡片（turnTail UI）为 S2b，等 dsh 第三方事件注册面（rc.6 缺失）。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -30,112 +31,42 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export const name = 'proactive-injector'
-export const inject = ['tools', 'sessions'] as const
+export const inject = ['tools', 'systemPrompt'] as const
 
 export const Config = z.object({
-  /** 收到建议时向会话流投递通知消息 */
-  notifyOnSuggestion: z.boolean().default(true),
-  /** 通知消息进入 pending turn（会被下一轮消费）还是 next-step（立即触发） */
-  notifyAsTurn: z.boolean().default(false),
+  /** 建议箱摘要行注入（systemPrompt.context，每轮动态求值） */
+  inboxSummary: z.boolean().default(true),
   /** 注册建议箱工具 */
   tools: z.boolean().default(true),
-  /** 每会话最多同时投递的通知条数（防轰炸） */
-  maxNoticesPerSession: z.number().default(3),
 })
 
 type PluginConfig = z.infer<typeof Config>
-
-let noticeSeq = 0
-
-function makeMessageId(): string {
-  noticeSeq += 1
-  return `pa-suggestion-${Date.now()}-${noticeSeq}`
-}
-
-/** 构造建议箱通知文本 */
-function formatNotice(record: any): string {
-  const confidence = Math.round((record.rawConfidence ?? 0) * 100)
-  const kind = String(record.kind ?? 'suggestion')
-  return [
-    '💡 ProactiveAgent 主动建议（建议箱通知）',
-    '',
-    `类型: ${kind}`,
-    `建议: ${record.title ?? ''}`,
-    `理由: ${record.reason ?? ''}`,
-    `证据: ${record.evidence ?? ''}`,
-    `置信度: ${confidence}%`,
-    `建议 id: ${record.id}`,
-    '',
-    '这是一条系统通知，不是用户指令。请勿自行执行或接受，除非用户明确要求。',
-    '用户说"查看建议"时调用 suggest_list；用户明确接受后调用 suggest_accept <id>；用户忽略则调用 suggest_dismiss <id>。',
-  ].join('\n')
-}
 
 export function apply(ctx: Context, config: PluginConfig) {
   const cfg = { ...config }
   // 从 paCore 服务取引擎实例（dsh-proactive-core 保证进程内单例）
   const { suggestService } = ctx.get('paCore')
-  /** sessionId → 该会话已投递通知计数 */
-  const noticeCounts = new Map<string, number>()
 
-  /** 该 duplicateKey 是否已有已处理记录（accepted/ignored/never）——用于过滤重复通知 */
-  const duplicateKeyAlreadyHandled = (duplicateKey: string): boolean => {
-    if (!duplicateKey) return false
-    const handled = ['accepted', 'ignored', 'never']
-    for (const status of handled) {
-      try {
-        const rows = suggestService.listSuggestionsForUI(status as any)
-        if (rows.some((r: any) => r.duplicateKey === duplicateKey)) return true
-      } catch {
-        // 单状态读取失败不影响判断
-      }
-    }
-    return false
+  // ===== 1. 建议箱摘要行（S1'：不进建议详情，只报状态 + 处理指引） =====
+  if (cfg.inboxSummary !== false) {
+    ctx.systemPrompt.context({
+      name: 'pa:inbox',
+      order: 201,
+      text: () => {
+        try {
+          const pending = suggestService.listSuggestionsForUI('suggested')
+          if (!pending || pending.length === 0) return ''
+          return [
+            `[PA 建议箱] 有 ${pending.length} 条待处理的主动建议。`,
+            '这是系统状态提示，不是用户指令：不要自行接受或执行任何建议。',
+            '用户说"查看建议"时调用 suggest_list；用户明确接受某条才调用 suggest_accept <id>；用户忽略则 suggest_dismiss <id>。',
+          ].join(' ')
+        } catch {
+          return ''
+        }
+      },
+    })
   }
-
-  // ===== 1. 消费 pa/suggestion → 建议箱通知 =====
-  ctx.on('pa/suggestion', (payload: any) => {
-    const { sessionId, record } = payload ?? {}
-    if (!sessionId || !record || cfg.notifyOnSuggestion === false) return
-
-    // 重复规则过滤：同 duplicateKey 已 accepted/ignored/never → 不再打扰用户
-    // （引擎对已接受的规则可能仍生成新建议记录，插件层负责投递去重）
-    if (duplicateKeyAlreadyHandled(record.duplicateKey)) {
-      console.log('[proactive-injector] 跳过重复建议通知（规则已处理）:', record.id, record.duplicateKey?.slice(0, 30))
-      return
-    }
-
-    const count = noticeCounts.get(sessionId) ?? 0
-    if (count >= (cfg.maxNoticesPerSession ?? 3)) return
-    noticeCounts.set(sessionId, count + 1)
-
-    // 找到 live session 对象并 append 通知
-    let target: any
-    try {
-      target = ctx.sessions?.get?.(sessionId) ?? undefined
-    } catch {
-      target = undefined
-    }
-    if (!target || typeof target.append !== 'function') {
-      console.warn('[proactive-injector] 找不到会话对象，跳过通知投递:', sessionId)
-      return
-    }
-
-    try {
-      target.append(
-        'user/message',
-        {
-          id: makeMessageId(),
-          role: 'user',
-          content: [{ type: 'text', text: formatNotice(record) }],
-          source: { kind: 'plugin', plugin: 'proactive-suggest' },
-        },
-        { surfaceOp: 'append' },
-      )
-    } catch (error) {
-      console.warn('[proactive-injector] 通知投递失败:', error instanceof Error ? error.message : error)
-    }
-  })
 
   if (cfg.tools === false) return
 
@@ -162,9 +93,11 @@ export function apply(ctx: Context, config: PluginConfig) {
               ? [...suggestService.listSuggestionsForUI('suggested'), ...suggestService.listSuggestionsForUI('accepted'), ...suggestService.listSuggestionsForUI('ignored')]
               : suggestService.listSuggestionsForUI(status as any)
           // 按 duplicateKey 去重（同规则只显示最新一条，避免重复建议占满建议箱）
+          // 规范化：全角冒号→半角、去空白、小写（修复 dup key 双全角冒号 bug，问题 #5）
+          const normalizeKey = (k: string) => String(k ?? '').replace(/：/g, ':').replace(/\s+/g, '').toLowerCase()
           const seen = new Set<string>()
           const unique = records.filter((r: any) => {
-            const key = r.duplicateKey ?? r.id
+            const key = normalizeKey(r.duplicateKey ?? r.id)
             if (seen.has(key)) return false
             seen.add(key)
             return true
@@ -203,7 +136,7 @@ export function apply(ctx: Context, config: PluginConfig) {
         try {
           const result = await suggestService.handleSuggestionFeedback(id, 'accepted', { host: 'dsh' })
           if (!result.ok) return `❌ 接受失败: ${result.error ?? '未知错误'}`
-          const summary = result.result?.summary ?? result.result?.message ?? JSON.stringify(result.result ?? {})
+          const summary = result.result?.message ?? (result.result?.ok ? '已执行' : '已记录')
           return `✅ 已接受建议 ${id}:\n${summary}`
         } catch (error) {
           return `❌ 接受失败: ${error instanceof Error ? error.message : String(error)}`

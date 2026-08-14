@@ -32,6 +32,14 @@ export const inject = ['tools', 'systemPrompt'] as const
 export const Config = z.object({
   /** persona 段在提示词中的顺序（0 为部署 persona） */
   personaOrder: z.number().default(5),
+  /** 画像长度上限（字符），超长截断防 token 爆炸 */
+  personaMaxChars: z.number().default(3000),
+  /** capture 后异步刷新画像（防 stale） */
+  refreshPersonaOnCapture: z.boolean().default(true),
+  /** 每轮记忆上下文注入（systemPrompt.context 动态求值） */
+  recallContext: z.boolean().default(true),
+  /** 记忆上下文注入条数（交给 contextForMessage 的 limit） */
+  recallContextLimit: z.number().default(5),
   /** 工具是否启用 */
   captureTool: z.boolean().default(true),
   recallTool: z.boolean().default(true),
@@ -42,10 +50,38 @@ type PluginConfig = z.infer<typeof Config>
 
 const MEMORY_TYPES = ['fact', 'preference', 'correction', 'sop', 'todo_context', 'event'] as const
 
+/** 从 dsh ContentBlock[] 提取纯文本 */
+function extractText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .filter((b: any) => b && b.type === 'text' && typeof b.text === 'string')
+      .map((b: any) => b.text)
+      .join('\n')
+  }
+  return ''
+}
+
 export function apply(ctx: Context, config: PluginConfig) {
   const cfg = { ...config }
   // 从 paCore 服务取引擎实例（dsh-proactive-core 保证进程内单例）
   const { memoryService } = ctx.get('paCore')
+
+  // ===== 最近用户消息缓存（供每轮记忆上下文注入使用） =====
+  const latestUserText = new Map<string, string>()
+  ctx.on('session/event', (session: any, event: any) => {
+    if (event?.type !== 'user/message') return
+    const data = event.data
+    // 过滤 plugin 合成消息，只缓存真实用户输入
+    if (data?.source?.kind === 'plugin') return
+    const text = extractText(data?.content)
+    const sid = String(session?.id ?? '')
+    if (sid && text.trim()) latestUserText.set(sid, text.trim())
+  })
+  ctx.on('session/disposed', (session: any) => {
+    const sid = String(session?.id ?? '')
+    if (sid) latestUserText.delete(sid)
+  })
 
   // ===== 1. 工具：memory_capture =====
   if (cfg.captureTool !== false) {
@@ -75,7 +111,7 @@ export function apply(ctx: Context, config: PluginConfig) {
           schema: { type: 'string' },
           render: (_args, value: string) => [{ type: 'text', text: value }],
         },
-        execute(args) {
+        execute: async (args) => {
           const content = String(args.content ?? '').trim()
           if (!content) return '❌ 记忆内容不能为空'
           const type = (MEMORY_TYPES as readonly string[]).includes(String(args.type)) ? (args.type as (typeof MEMORY_TYPES)[number]) : 'fact'
@@ -87,6 +123,10 @@ export function apply(ctx: Context, config: PluginConfig) {
               { scope },
               { confirmed: true },
             )
+            // 捕获后异步刷新画像，避免 persona 段 stale（实测问题 #3）
+            if (cfg.refreshPersonaOnCapture !== false) {
+              void Promise.resolve(memoryService.regeneratePersona?.()).catch(() => {})
+            }
             const verb = result.deduplicated ? '已合并进已有记忆' : '已记住'
             return `✅ ${verb} [${result.atom.type}]（${result.atom.scope ?? scope} 层，优先级 ${result.atom.priority ?? 50}）:\n${result.atom.content}`
           } catch (error) {
@@ -185,10 +225,34 @@ export function apply(ctx: Context, config: PluginConfig) {
       try {
         const personaText = memoryService.personaRaw('auto')
         if (!personaText) return ''
-        return `# 用户画像（ProactiveAgent 长期记忆）\n\n${personaText}\n\n以上画像来自跨工具共享的长期记忆库，供你理解用户偏好时参考。`
+        const max = Math.max(0, cfg.personaMaxChars ?? 3000)
+        const capped = personaText.length > max ? `${personaText.slice(0, max)}\n…（画像过长已截断，完整画像可用 memory_stats 查看）` : personaText
+        return `# 用户画像（ProactiveAgent 长期记忆）\n\n${capped}\n\n以上画像来自跨工具共享的长期记忆库，供你理解用户偏好时参考；若画像与用户当前说法冲突，以用户当前说法为准。`
       } catch {
         return ''
       }
     },
   })
+
+  // ===== 5. 每轮记忆上下文注入（M1：systemPrompt.context 动态求值，BM25 无 LLM） =====
+  if (cfg.recallContext !== false) {
+    ctx.systemPrompt.context({
+      name: 'pa:recall',
+      order: 200,
+      text: (assembleCtx: any) => {
+        try {
+          // AssembleContext 经 dsh-agent 增补 agent 字段（session.id 可取）
+          const agent = assembleCtx?.agent
+          const sid = agent?.session?.id ? String(agent.session.id) : ''
+          const userText = sid ? (latestUserText.get(sid) ?? '') : ''
+          if (!userText) return ''
+          const memoryBlock = memoryService.contextForMessage(userText, { limit: cfg.recallContextLimit ?? 5 })
+          // 空串 = 无命中，不注入；命中则随本轮组装进入模型上下文
+          return memoryBlock || ''
+        } catch {
+          return ''
+        }
+      },
+    })
+  }
 }

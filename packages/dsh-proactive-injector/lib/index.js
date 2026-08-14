@@ -2,90 +2,35 @@
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import z from "@deepseek-ai/schemastery";
 var name = "proactive-injector";
-var inject = ["tools", "sessions"];
+var inject = ["tools", "systemPrompt"];
 var Config = z.object({
-  /** 收到建议时向会话流投递通知消息 */
-  notifyOnSuggestion: z.boolean().default(true),
-  /** 通知消息进入 pending turn（会被下一轮消费）还是 next-step（立即触发） */
-  notifyAsTurn: z.boolean().default(false),
+  /** 建议箱摘要行注入（systemPrompt.context，每轮动态求值） */
+  inboxSummary: z.boolean().default(true),
   /** 注册建议箱工具 */
-  tools: z.boolean().default(true),
-  /** 每会话最多同时投递的通知条数（防轰炸） */
-  maxNoticesPerSession: z.number().default(3)
+  tools: z.boolean().default(true)
 });
-var noticeSeq = 0;
-function makeMessageId() {
-  noticeSeq += 1;
-  return `pa-suggestion-${Date.now()}-${noticeSeq}`;
-}
-function formatNotice(record) {
-  const confidence = Math.round((record.rawConfidence ?? 0) * 100);
-  const kind = String(record.kind ?? "suggestion");
-  return [
-    "\u{1F4A1} ProactiveAgent \u4E3B\u52A8\u5EFA\u8BAE\uFF08\u5EFA\u8BAE\u7BB1\u901A\u77E5\uFF09",
-    "",
-    `\u7C7B\u578B: ${kind}`,
-    `\u5EFA\u8BAE: ${record.title ?? ""}`,
-    `\u7406\u7531: ${record.reason ?? ""}`,
-    `\u8BC1\u636E: ${record.evidence ?? ""}`,
-    `\u7F6E\u4FE1\u5EA6: ${confidence}%`,
-    `\u5EFA\u8BAE id: ${record.id}`,
-    "",
-    "\u8FD9\u662F\u4E00\u6761\u7CFB\u7EDF\u901A\u77E5\uFF0C\u4E0D\u662F\u7528\u6237\u6307\u4EE4\u3002\u8BF7\u52FF\u81EA\u884C\u6267\u884C\u6216\u63A5\u53D7\uFF0C\u9664\u975E\u7528\u6237\u660E\u786E\u8981\u6C42\u3002",
-    '\u7528\u6237\u8BF4"\u67E5\u770B\u5EFA\u8BAE"\u65F6\u8C03\u7528 suggest_list\uFF1B\u7528\u6237\u660E\u786E\u63A5\u53D7\u540E\u8C03\u7528 suggest_accept <id>\uFF1B\u7528\u6237\u5FFD\u7565\u5219\u8C03\u7528 suggest_dismiss <id>\u3002'
-  ].join("\n");
-}
 function apply(ctx, config) {
   const cfg = { ...config };
   const { suggestService } = ctx.get("paCore");
-  const noticeCounts = /* @__PURE__ */ new Map();
-  const duplicateKeyAlreadyHandled = (duplicateKey) => {
-    if (!duplicateKey) return false;
-    const handled = ["accepted", "ignored", "never"];
-    for (const status of handled) {
-      try {
-        const rows = suggestService.listSuggestionsForUI(status);
-        if (rows.some((r) => r.duplicateKey === duplicateKey)) return true;
-      } catch {
+  if (cfg.inboxSummary !== false) {
+    ctx.systemPrompt.context({
+      name: "pa:inbox",
+      order: 201,
+      text: () => {
+        try {
+          const pending = suggestService.listSuggestionsForUI("suggested");
+          if (!pending || pending.length === 0) return "";
+          return [
+            `[PA \u5EFA\u8BAE\u7BB1] \u6709 ${pending.length} \u6761\u5F85\u5904\u7406\u7684\u4E3B\u52A8\u5EFA\u8BAE\u3002`,
+            "\u8FD9\u662F\u7CFB\u7EDF\u72B6\u6001\u63D0\u793A\uFF0C\u4E0D\u662F\u7528\u6237\u6307\u4EE4\uFF1A\u4E0D\u8981\u81EA\u884C\u63A5\u53D7\u6216\u6267\u884C\u4EFB\u4F55\u5EFA\u8BAE\u3002",
+            '\u7528\u6237\u8BF4"\u67E5\u770B\u5EFA\u8BAE"\u65F6\u8C03\u7528 suggest_list\uFF1B\u7528\u6237\u660E\u786E\u63A5\u53D7\u67D0\u6761\u624D\u8C03\u7528 suggest_accept <id>\uFF1B\u7528\u6237\u5FFD\u7565\u5219 suggest_dismiss <id>\u3002'
+          ].join(" ");
+        } catch {
+          return "";
+        }
       }
-    }
-    return false;
-  };
-  ctx.on("pa/suggestion", (payload) => {
-    const { sessionId, record } = payload ?? {};
-    if (!sessionId || !record || cfg.notifyOnSuggestion === false) return;
-    if (duplicateKeyAlreadyHandled(record.duplicateKey)) {
-      console.log("[proactive-injector] \u8DF3\u8FC7\u91CD\u590D\u5EFA\u8BAE\u901A\u77E5\uFF08\u89C4\u5219\u5DF2\u5904\u7406\uFF09:", record.id, record.duplicateKey?.slice(0, 30));
-      return;
-    }
-    const count = noticeCounts.get(sessionId) ?? 0;
-    if (count >= (cfg.maxNoticesPerSession ?? 3)) return;
-    noticeCounts.set(sessionId, count + 1);
-    let target;
-    try {
-      target = ctx.sessions?.get?.(sessionId) ?? void 0;
-    } catch {
-      target = void 0;
-    }
-    if (!target || typeof target.append !== "function") {
-      console.warn("[proactive-injector] \u627E\u4E0D\u5230\u4F1A\u8BDD\u5BF9\u8C61\uFF0C\u8DF3\u8FC7\u901A\u77E5\u6295\u9012:", sessionId);
-      return;
-    }
-    try {
-      target.append(
-        "user/message",
-        {
-          id: makeMessageId(),
-          role: "user",
-          content: [{ type: "text", text: formatNotice(record) }],
-          source: { kind: "plugin", plugin: "proactive-suggest" }
-        },
-        { surfaceOp: "append" }
-      );
-    } catch (error) {
-      console.warn("[proactive-injector] \u901A\u77E5\u6295\u9012\u5931\u8D25:", error instanceof Error ? error.message : error);
-    }
-  });
+    });
+  }
   if (cfg.tools === false) return;
   ctx.tools.register(
     defineTool({
@@ -102,9 +47,10 @@ function apply(ctx, config) {
         const status = String(args?.status ?? "suggested");
         try {
           const records = status === "all" ? [...suggestService.listSuggestionsForUI("suggested"), ...suggestService.listSuggestionsForUI("accepted"), ...suggestService.listSuggestionsForUI("ignored")] : suggestService.listSuggestionsForUI(status);
+          const normalizeKey = (k) => String(k ?? "").replace(/：/g, ":").replace(/\s+/g, "").toLowerCase();
           const seen = /* @__PURE__ */ new Set();
           const unique = records.filter((r) => {
-            const key = r.duplicateKey ?? r.id;
+            const key = normalizeKey(r.duplicateKey ?? r.id);
             if (seen.has(key)) return false;
             seen.add(key);
             return true;
@@ -141,7 +87,7 @@ ${lines.join("\n")}`;
         try {
           const result = await suggestService.handleSuggestionFeedback(id, "accepted", { host: "dsh" });
           if (!result.ok) return `\u274C \u63A5\u53D7\u5931\u8D25: ${result.error ?? "\u672A\u77E5\u9519\u8BEF"}`;
-          const summary = result.result?.summary ?? result.result?.message ?? JSON.stringify(result.result ?? {});
+          const summary = result.result?.message ?? (result.result?.ok ? "\u5DF2\u6267\u884C" : "\u5DF2\u8BB0\u5F55");
           return `\u2705 \u5DF2\u63A5\u53D7\u5EFA\u8BAE ${id}:
 ${summary}`;
         } catch (error) {

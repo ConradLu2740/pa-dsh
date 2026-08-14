@@ -1,6 +1,6 @@
 {
   "name": "@proactive-agent/dsh-proactive-skills",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Expose ProactiveAgent sop memories as dsh skills via skill provider",
   "type": "module",
   "main": "lib/index.js",
@@ -19,7 +19,7 @@
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-skill": "^0.1.0-rc.6",
     "@deepseek-ai/schemastery": "^3.18.0",
-    "@proactive-agent/dsh-proactive-core": "^0.1.1"
+    "@proactive-agent/dsh-proactive-core": "^0.2.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
