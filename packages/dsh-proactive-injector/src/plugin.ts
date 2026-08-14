@@ -78,10 +78,32 @@ export function apply(ctx: Context, config: PluginConfig) {
   /** sessionId → 该会话已投递通知计数 */
   const noticeCounts = new Map<string, number>()
 
+  /** 该 duplicateKey 是否已有已处理记录（accepted/ignored/never）——用于过滤重复通知 */
+  const duplicateKeyAlreadyHandled = (duplicateKey: string): boolean => {
+    if (!duplicateKey) return false
+    const handled = ['accepted', 'ignored', 'never']
+    for (const status of handled) {
+      try {
+        const rows = suggestService.listSuggestionsForUI(status as any)
+        if (rows.some((r: any) => r.duplicateKey === duplicateKey)) return true
+      } catch {
+        // 单状态读取失败不影响判断
+      }
+    }
+    return false
+  }
+
   // ===== 1. 消费 pa/suggestion → 建议箱通知 =====
   ctx.on('pa/suggestion', (payload: any) => {
     const { sessionId, record } = payload ?? {}
     if (!sessionId || !record || cfg.notifyOnSuggestion === false) return
+
+    // 重复规则过滤：同 duplicateKey 已 accepted/ignored/never → 不再打扰用户
+    // （引擎对已接受的规则可能仍生成新建议记录，插件层负责投递去重）
+    if (duplicateKeyAlreadyHandled(record.duplicateKey)) {
+      console.log('[proactive-injector] 跳过重复建议通知（规则已处理）:', record.id, record.duplicateKey?.slice(0, 30))
+      return
+    }
 
     const count = noticeCounts.get(sessionId) ?? 0
     if (count >= (cfg.maxNoticesPerSession ?? 3)) return
@@ -139,12 +161,20 @@ export function apply(ctx: Context, config: PluginConfig) {
             status === 'all'
               ? [...suggestService.listSuggestionsForUI('suggested'), ...suggestService.listSuggestionsForUI('accepted'), ...suggestService.listSuggestionsForUI('ignored')]
               : suggestService.listSuggestionsForUI(status as any)
-          if (records.length === 0) return `📭 建议箱为空（${status}）`
-          const lines = records.map((r: any, i: number) => {
+          // 按 duplicateKey 去重（同规则只显示最新一条，避免重复建议占满建议箱）
+          const seen = new Set<string>()
+          const unique = records.filter((r: any) => {
+            const key = r.duplicateKey ?? r.id
+            if (seen.has(key)) return false
+            seen.add(key)
+            return true
+          })
+          if (unique.length === 0) return `📭 建议箱为空（${status}）`
+          const lines = unique.map((r: any, i: number) => {
             const when = new Date(r.createdAt).toLocaleString('zh-CN', { hour12: false })
             return `${i + 1}. [${r.kind}] ${r.title}（${Math.round((r.rawConfidence ?? 0) * 100)}% · ${when}）\n   id: ${r.id}\n   理由: ${r.reason ?? '-'}`
           })
-          return `📬 建议箱（${status}，共 ${records.length} 条）:\n${lines.join('\n')}`
+          return `📬 建议箱（${status}，共 ${unique.length} 条）:\n${lines.join('\n')}`
         } catch (error) {
           return `❌ 读取建议箱失败: ${error instanceof Error ? error.message : String(error)}`
         }

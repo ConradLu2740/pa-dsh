@@ -39,9 +39,25 @@ function apply(ctx, config) {
   const cfg = { ...config };
   const { suggestService } = ctx.get("paCore");
   const noticeCounts = /* @__PURE__ */ new Map();
+  const duplicateKeyAlreadyHandled = (duplicateKey) => {
+    if (!duplicateKey) return false;
+    const handled = ["accepted", "ignored", "never"];
+    for (const status of handled) {
+      try {
+        const rows = suggestService.listSuggestionsForUI(status);
+        if (rows.some((r) => r.duplicateKey === duplicateKey)) return true;
+      } catch {
+      }
+    }
+    return false;
+  };
   ctx.on("pa/suggestion", (payload) => {
     const { sessionId, record } = payload ?? {};
     if (!sessionId || !record || cfg.notifyOnSuggestion === false) return;
+    if (duplicateKeyAlreadyHandled(record.duplicateKey)) {
+      console.log("[proactive-injector] \u8DF3\u8FC7\u91CD\u590D\u5EFA\u8BAE\u901A\u77E5\uFF08\u89C4\u5219\u5DF2\u5904\u7406\uFF09:", record.id, record.duplicateKey?.slice(0, 30));
+      return;
+    }
     const count = noticeCounts.get(sessionId) ?? 0;
     if (count >= (cfg.maxNoticesPerSession ?? 3)) return;
     noticeCounts.set(sessionId, count + 1);
@@ -86,14 +102,21 @@ function apply(ctx, config) {
         const status = String(args?.status ?? "suggested");
         try {
           const records = status === "all" ? [...suggestService.listSuggestionsForUI("suggested"), ...suggestService.listSuggestionsForUI("accepted"), ...suggestService.listSuggestionsForUI("ignored")] : suggestService.listSuggestionsForUI(status);
-          if (records.length === 0) return `\u{1F4ED} \u5EFA\u8BAE\u7BB1\u4E3A\u7A7A\uFF08${status}\uFF09`;
-          const lines = records.map((r, i) => {
+          const seen = /* @__PURE__ */ new Set();
+          const unique = records.filter((r) => {
+            const key = r.duplicateKey ?? r.id;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          if (unique.length === 0) return `\u{1F4ED} \u5EFA\u8BAE\u7BB1\u4E3A\u7A7A\uFF08${status}\uFF09`;
+          const lines = unique.map((r, i) => {
             const when = new Date(r.createdAt).toLocaleString("zh-CN", { hour12: false });
             return `${i + 1}. [${r.kind}] ${r.title}\uFF08${Math.round((r.rawConfidence ?? 0) * 100)}% \xB7 ${when}\uFF09
    id: ${r.id}
    \u7406\u7531: ${r.reason ?? "-"}`;
           });
-          return `\u{1F4EC} \u5EFA\u8BAE\u7BB1\uFF08${status}\uFF0C\u5171 ${records.length} \u6761\uFF09:
+          return `\u{1F4EC} \u5EFA\u8BAE\u7BB1\uFF08${status}\uFF0C\u5171 ${unique.length} \u6761\uFF09:
 ${lines.join("\n")}`;
         } catch (error) {
           return `\u274C \u8BFB\u53D6\u5EFA\u8BAE\u7BB1\u5931\u8D25: ${error instanceof Error ? error.message : String(error)}`;
