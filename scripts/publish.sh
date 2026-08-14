@@ -50,6 +50,9 @@ for d in dsh-proactive-core dsh-proactive-memory dsh-proactive-suggest dsh-proac
   (cd "packages/$d" && npm publish --access public)
 done
 
+echo ">>> 发布 bundle 聚合包 @proactive-agent/dsh（无构建产物，版本同步）"
+(cd packages/dsh && npm version "$TYPE" --no-git-tag-version --no-commit-hooks >/dev/null && npm publish --access public)
+
 echo ""
 echo "✅ 全部发布完成。接下来升级 dsh profile:"
 echo "   cd ~/.dsh/profiles/web && pnpm add @proactive-agent/dsh-proactive-core@^$CORE_VERSION @proactive-agent/dsh-proactive-memory@^$CORE_VERSION @proactive-agent/dsh-proactive-suggest@^$CORE_VERSION @proactive-agent/dsh-proactive-injector@^$CORE_VERSION @proactive-agent/dsh-proactive-daily@^$CORE_VERSION @proactive-agent/dsh-proactive-skills@^$CORE_VERSION"
