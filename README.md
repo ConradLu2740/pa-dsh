@@ -58,14 +58,21 @@ graph TB
 | [@proactive-agent/dsh-proactive-daily](https://www.npmjs.com/package/@proactive-agent/dsh-proactive-daily) | 每日 09:30 定时回顾 + daily_review 工具 |
 | [@proactive-agent/dsh-proactive-skills](https://www.npmjs.com/package/@proactive-agent/dsh-proactive-skills) | sop 记忆 → dsh skills（pa-sop-N 动态目录） |
 
-## 安装到 dsh profile
+## 安装到 dsh profile（官方 bundle 形态，推荐）
+
+```bash
+# 一条命令：自动安装 6 包 + 应用 cordis.patch.yml 层
+dsh plugin --profile web add @proactive-agent/dsh
+```
+
+## 细粒度安装（高级，逐个启用）
 
 ```bash
 cd ~/.dsh/profiles/web
 pnpm add @proactive-agent/dsh-proactive-core @proactive-agent/dsh-proactive-memory @proactive-agent/dsh-proactive-suggest @proactive-agent/dsh-proactive-injector @proactive-agent/dsh-proactive-daily @proactive-agent/dsh-proactive-skills
 ```
 
-在 `~/.dsh/profiles/web/cordis.patch.yml` 添加（**pa-core 必须排最前**）：
+在 `~/.dsh/profiles/web/cordis.patch.yml` 添加（**pa-core 必须排最前**，内容同 bundle 包的 cordis.patch.yml）：
 
 ```yaml
 - insert:
@@ -101,7 +108,7 @@ node scripts/build.mjs          # esbuild 构建全部插件到 packages/*/lib/
 ## 发布到 npm（在你终端运行，2FA 为 WebAuthn）
 
 ```bash
-bash scripts/publish.sh          # patch 版本（可 minor / major）
+bash scripts/publish.sh          # patch 版本（可 minor / major），含 bundle 聚合包
 ```
 
 每个包发布时按 Enter 打开浏览器 → 指纹授权。随后升级 dsh profile：

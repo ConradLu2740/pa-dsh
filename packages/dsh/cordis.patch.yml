@@ -1,0 +1,34 @@
+# @proactive-agent/dsh bundle 层：6 个 pa-* 插件的挂载声明
+# 由 dsh plugin add @proactive-agent/dsh 自动应用（官方 bundle 形态）
+- insert:
+    # ProactiveAgent 引擎单例宿主：唯一 import @proactive-agent/core，
+    # 以 paCore 服务提供给其余插件。必须排在所有 pa-* 插件之前。
+    - id: pa-core
+      name: '@proactive-agent/dsh-proactive-core'
+      config: {}
+    # ProactiveAgent 原生记忆插件：memory_capture / memory_recall / memory_stats
+    # + persona 画像段 + 每轮记忆上下文注入（pa:recall）
+    - id: pa-memory
+      name: '@proactive-agent/dsh-proactive-memory'
+      config:
+        personaOrder: 5
+    # ProactiveAgent 主动建议引擎：session 事件 → evaluateNow 触发器 + suggest_now 工具
+    - id: pa-suggest
+      name: '@proactive-agent/dsh-proactive-suggest'
+      config: {}
+    # ProactiveAgent 建议箱 + 反馈闭环：建议箱摘要行（S1' 降噪）+ suggest_list/accept/dismiss
+    - id: pa-injector
+      name: '@proactive-agent/dsh-proactive-injector'
+      config:
+        inboxSummary: true
+        tools: true
+    # ProactiveAgent 每日回顾：每日 09:30 timer 评估 + daily_review 工具
+    - id: pa-daily
+      name: '@proactive-agent/dsh-proactive-daily'
+      config:
+        dailyAt: '09:30'
+    # ProactiveAgent 流程记忆 → dsh skills：sop 记忆动态暴露为 pa-sop-N 技能
+    - id: pa-skills
+      name: '@proactive-agent/dsh-proactive-skills'
+      config:
+        maxSkills: 10
