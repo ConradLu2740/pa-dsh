@@ -1,6 +1,6 @@
 {
   "name": "@proactive-agent/dsh-proactive-injector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "ProactiveAgent suggestion mailbox + feedback tools for DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",
@@ -20,7 +20,7 @@
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.6",
     "@deepseek-ai/schemastery": "^3.18.0",
-    "@proactive-agent/dsh-proactive-core": "^0.1.0"
+    "@proactive-agent/dsh-proactive-core": "^0.1.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
