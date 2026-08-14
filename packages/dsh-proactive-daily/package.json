@@ -1,6 +1,6 @@
 {
   "name": "@proactive-agent/dsh-proactive-daily",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Daily proactive review for DeepSeek Harness: timer trigger + daily_review tool",
   "type": "module",
   "main": "lib/index.js",
@@ -19,7 +19,7 @@
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
     "@deepseek-ai/schemastery": "^3.18.0",
-    "@proactive-agent/dsh-proactive-core": "^0.1.0"
+    "@proactive-agent/dsh-proactive-core": "^0.1.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
