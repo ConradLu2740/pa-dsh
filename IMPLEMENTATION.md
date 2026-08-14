@@ -58,12 +58,12 @@ pkill -f "dsh.*web"; cd workspace-files && ./run-dsh.sh
 
 | 包 | 版本 | 说明 |
 | --- | --- | --- |
-| @proactive-agent/dsh-proactive-core | 0.1.0 | 引擎单例宿主（必须最先装） |
-| @proactive-agent/dsh-proactive-memory | 0.1.0 | 原生记忆工具 + persona 段 |
-| @proactive-agent/dsh-proactive-suggest | 0.1.0 | 主动建议引擎 |
-| @proactive-agent/dsh-proactive-injector | 0.1.0 | 建议箱 + 反馈闭环 |
-| @proactive-agent/dsh-proactive-daily | 0.1.0 | 每日回顾 |
-| @proactive-agent/dsh-proactive-skills | 0.1.0 | sop → skills |
+| @proactive-agent/dsh-proactive-core | 0.1.1 | 引擎单例宿主（必须最先装） |
+| @proactive-agent/dsh-proactive-memory | 0.1.1 | 原生记忆工具 + persona 段 |
+| @proactive-agent/dsh-proactive-suggest | 0.1.1 | 主动建议引擎 |
+| @proactive-agent/dsh-proactive-injector | 0.1.1 | 建议箱 + 反馈闭环 |
+| @proactive-agent/dsh-proactive-daily | 0.1.1 | 每日回顾 |
+| @proactive-agent/dsh-proactive-skills | 0.1.1 | sop → skills |
 
 dsh profile 依赖已从 `file:` 切换为 `^0.1.0`（npm 版本），升级方式：改版本号后 `cd ~/.dsh/profiles/web && pnpm add @proactive-agent/dsh-proactive-xxx@新版本`。
 
@@ -77,4 +77,4 @@ dsh profile 依赖已从 `file:` 切换为 `^0.1.0`（npm 版本），升级方�
 4. **PA 引擎 LLM 接入**：给 PA core 配置 LLM（PROACTIVE_LLM_* env）后，persona 生成与 suggestion 评估质量升级（目前规则版兜底）。
 5. **回并 PA 主仓库**：方案乙（本仓库起步）稳定后可考虑把 packages/ 移回 ProactiveAgent 主仓库发 npm。
 6. **P1/P2 待办（子代理审查报告）**：通知消息实际进入模型上下文（弱约束，理想走 UI 卡）；session_end/timer 建议在无活会话时仅落库等待下次推送（已改，不再伪造 'daily' id）；persona 段已改动态求值；`pa-sop-N` 技能名漂移（改用稳定 id）；`any` 类型收敛。
-7. **通知重复推送（2026-08-13 实测反馈）**：session_start 存量推送 + 已接受建议同 duplicateKey 可再次生成，导致会话流出现重复建议通知；建议：session_start 推送时过滤掉 duplicateKey 已处理的记录，或对同一会话内同 duplicateKey 去重。
+7. **通知重复推送（已修复 v0.1.1，2026-08-14）**：injector 投递前按 duplicateKey 过滤已处理（accepted/ignored/never）规则；suggest_list 按 duplicateKey 去重显示。引擎层 existingCorrectionRules 也会抑制同规则候选，双重保障。
