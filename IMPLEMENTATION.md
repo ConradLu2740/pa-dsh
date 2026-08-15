@@ -78,3 +78,22 @@ dsh profile 依赖已从 `file:` 切换为 `^0.1.0`（npm 版本），升级方�
 5. **回并 PA 主仓库**：方案乙（本仓库起步）稳定后可考虑把 packages/ 移回 ProactiveAgent 主仓库发 npm。
 6. **P1/P2 待办（子代理审查报告）**：通知消息实际进入模型上下文（弱约束，理想走 UI 卡）；session_end/timer 建议在无活会话时仅落库等待下次推送（已改，不再伪造 'daily' id）；persona 段已改动态求值；`pa-sop-N` 技能名漂移（改用稳定 id）；`any` 类型收敛。
 7. **通知重复推送（已修复 v0.1.1，2026-08-14）**：injector 投递前按 duplicateKey 过滤已处理（accepted/ignored/never）规则；suggest_list 按 duplicateKey 去重显示。引擎层 existingCorrectionRules 也会抑制同规则候选，双重保障。
+
+## P1-M2 半自动捕获（2026-08-15）
+
+**目标**：对话结束（turn-stopping）自动提取记忆候选 → 用户确认后才进召回（防 LLM/规则误报污染）。
+
+**实现**（`dsh-proactive-memory`）：
+- 捕获点：`agent/turn-stopping`（serial 终检点，await 安全）——收集本轮 user/assistant 消息 → `extractAndCapture`（LLM→rule 降级，结果默认 pending）
+- 确认通道：优先 `ctx.userQuestions.ask()`（web 环境由 dsh-host-apiproxy 注册 provider，客户端 UI 渲染确认卡片）；不可用（headless/非 root/用户打断）时自动降级
+- 降级：pending 保留 + `systemPrompt.context` 摘要提示（"有 N 条待确认记忆"）+ `memory_pending_list / memory_pending_confirm / memory_pending_reject` 文本工具
+- 护栏：captureIntervalTurns 节流（默认 3 轮）、pending 未清不重复捕获、askMaxItems 候选上限、8s 提取超时不等、signal.abort 感知
+
+**验证**（headless 端到端）：
+- 输入"请记住：我偏好用简洁的中文注释" → 捕获完成（2 条新增 + 2 条纠正，rule 模式）→ pending 落盘 `confirmed:false` + corrections `status:pending` → 无 provider 自动降级摘要 → 模型正常回复（无通知污染）
+- 回归：带超时护栏后再次验证 1 新增 + 2 纠正 + 3 候选待确认，链路一致
+
+**关键证据**：
+- `agent/turn-stopping` payload `{agent, turn, signal}`（runtime-types.ts:278）
+- `ctx.userQuestions.ask({questions, agent, signal})`（dsh-user-questions），web provider 由 `dsh-host-apiproxy` 注册，UI 由 `dsh-client-ui-user-questions` 渲染
+- `extractAndCapture(messages, {sessionId})` → captureCandidates `{confirmed:false}`（engine 侧 pending 语义）

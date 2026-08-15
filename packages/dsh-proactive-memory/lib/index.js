@@ -17,7 +17,22 @@ var Config = z.object({
   /** 工具是否启用 */
   captureTool: z.boolean().default(true),
   recallTool: z.boolean().default(true),
-  statsTool: z.boolean().default(true)
+  statsTool: z.boolean().default(true),
+  // ===== M2 半自动捕获 =====
+  /** M2 总开关 */
+  autoCapture: z.boolean().default(true),
+  /** 是否在 agent/turn-stopping 终检点捕获 */
+  captureOnTurnStopping: z.boolean().default(true),
+  /** 每 N 轮捕获一次（节流防打扰） */
+  captureIntervalTurns: z.number().default(3),
+  /** 喂给 extractAndCapture 的最大消息数（取最近 N 条） */
+  captureMaxMessages: z.number().default(30),
+  /** 一次最多弹几条候选确认（防 UI 刷屏） */
+  askMaxItems: z.number().default(3),
+  /** 是否优先用 ctx.userQuestions.ask() 弹 UI 确认（不可用时自动降级） */
+  confirmViaAsk: z.boolean().default(true),
+  /** 有 pending 未确认时注入摘要提示（systemPrompt.context） */
+  pendingSummary: z.boolean().default(true)
 });
 var MEMORY_TYPES = ["fact", "preference", "correction", "sop", "todo_context", "event"];
 function extractText(content) {
@@ -30,19 +45,145 @@ function extractText(content) {
 function apply(ctx, config) {
   const cfg = { ...config };
   const { memoryService } = ctx.get("paCore");
-  const latestUserText = /* @__PURE__ */ new Map();
+  const messageBuffer = /* @__PURE__ */ new Map();
+  const MAX_BUFFER_SESSIONS = 20;
+  const pushMessage = (sessionId, msg) => {
+    let list = messageBuffer.get(sessionId);
+    if (!list) {
+      list = [];
+      messageBuffer.set(sessionId, list);
+      if (messageBuffer.size > MAX_BUFFER_SESSIONS) {
+        const oldest = messageBuffer.keys().next().value;
+        if (oldest !== void 0) messageBuffer.delete(oldest);
+      }
+    }
+    list.push(msg);
+    const max = Math.max(4, cfg.captureMaxMessages ?? 30);
+    if (list.length > max) list.splice(0, list.length - max);
+  };
   ctx.on("session/event", (session, event) => {
-    if (event?.type !== "user/message") return;
-    const data = event.data;
-    if (data?.source?.kind === "plugin") return;
-    const text = extractText(data?.content);
+    if (!session) return;
     const sid = String(session?.id ?? "");
-    if (sid && text.trim()) latestUserText.set(sid, text.trim());
+    if (!sid) return;
+    if (event?.type === "user/message") {
+      const data = event.data;
+      if (data?.source?.kind === "plugin") return;
+      const text = extractText(data?.content);
+      if (text.trim()) pushMessage(sid, { role: "user", content: text.trim() });
+      return;
+    }
+    if (event?.type === "assistant/message") {
+      const text = extractText(event.data?.message?.content ?? event.data?.content);
+      if (text.trim()) pushMessage(sid, { role: "assistant", content: text.trim() });
+    }
   });
   ctx.on("session/disposed", (session) => {
     const sid = String(session?.id ?? "");
-    if (sid) latestUserText.delete(sid);
+    if (sid) messageBuffer.delete(sid);
   });
+  const lastCaptureTurn = /* @__PURE__ */ new Map();
+  async function confirmViaAsk(agent, pending, signal) {
+    if (!cfg.confirmViaAsk || !agent) return false;
+    try {
+      const uq = ctx.get("userQuestions");
+      if (!uq) return false;
+      const answer = await uq.ask({
+        questions: pending.map((a) => ({
+          id: a.id,
+          header: "\u8BB0\u5FC6\u786E\u8BA4",
+          question: `\u8981\u8BB0\u4F4F\u8FD9\u6761\u8BB0\u5FC6\u5417\uFF1F`,
+          detail: `[${a.type}] ${a.content}`,
+          options: [
+            { label: "\u8BB0\u4F4F", description: "\u52A0\u5165\u957F\u671F\u8BB0\u5FC6\uFF0C\u4E4B\u540E\u53EF\u53EC\u56DE" },
+            { label: "\u5FFD\u7565", description: "\u4E0D\u8BB0\u4F4F\uFF0C\u5E76\u4ECE\u5F85\u786E\u8BA4\u5217\u8868\u79FB\u9664" }
+          ]
+        })),
+        agent,
+        signal
+      });
+      const byId = new Map(pending.map((a) => [String(a.id), a]));
+      for (const ans of answer?.answers ?? []) {
+        const atom = byId.get(String(ans.id));
+        if (!atom) continue;
+        const chosen = ans.selected?.[0];
+        if (chosen === "\u8BB0\u4F4F") {
+          memoryService.confirmAtomById(atom.id);
+          console.log(`[Memory] M2 \u7528\u6237\u786E\u8BA4\u8BB0\u5FC6: ${atom.content.slice(0, 60)}`);
+        } else if (chosen === "\u5FFD\u7565") {
+          memoryService.rejectAtomById(atom.id);
+          console.log(`[Memory] M2 \u7528\u6237\u5FFD\u7565\u8BB0\u5FC6: ${atom.content.slice(0, 60)}`);
+        }
+      }
+      return true;
+    } catch (error) {
+      const code = error?.code;
+      if (code !== "ASK_ABORTED" && code !== "ASK_CANCELLED") {
+        console.warn("[Memory] userQuestions \u786E\u8BA4\u4E0D\u53EF\u7528\uFF0C\u964D\u7EA7\u4E3A pending \u6458\u8981:", error instanceof Error ? error.message : error);
+      }
+      return false;
+    }
+  }
+  async function captureAtTurnStopping(agent, turn, signal) {
+    try {
+      const sid = String(agent?.session?.id ?? agent?.id ?? "");
+      if (!sid) return;
+      const lastTurn = lastCaptureTurn.get(sid);
+      if (lastTurn !== void 0 && turn - lastTurn < (cfg.captureIntervalTurns ?? 3)) return;
+      const existing = memoryService.pendingAtoms();
+      if (existing.length >= (cfg.askMaxItems ?? 3)) return;
+      const msgs = messageBuffer.get(sid) ?? [];
+      if (msgs.length < 2) return;
+      lastCaptureTurn.set(sid, turn);
+      let result;
+      try {
+        result = await Promise.race([
+          memoryService.extractAndCapture(msgs.slice(-(cfg.captureMaxMessages ?? 30)), {
+            sessionId: sid
+          }),
+          new Promise((resolve) => setTimeout(() => resolve(void 0), 8e3))
+        ]);
+      } catch {
+        result = void 0;
+      }
+      if (!result || result.storedCount + result.corrections === 0) return;
+      if (signal?.aborted) return;
+      const pending = memoryService.pendingAtoms();
+      const fresh = pending.slice(0, cfg.askMaxItems ?? 3);
+      if (fresh.length === 0) return;
+      const handled = await confirmViaAsk(agent, fresh, signal);
+      if (!handled) {
+        console.log(`[Memory] M2 \u6355\u83B7 ${fresh.length} \u6761\u5019\u9009\u5F85\u786E\u8BA4\uFF08${result.mode} \u6A21\u5F0F\uFF0C${sid}\uFF09`);
+      }
+    } catch (error) {
+      console.warn("[Memory] M2 turn-stopping \u6355\u83B7\u5931\u8D25:", error instanceof Error ? error.message : error);
+    }
+  }
+  if (cfg.autoCapture && cfg.captureOnTurnStopping) {
+    ;
+    ctx.on("agent/turn-stopping", (payload) => {
+      const { agent, turn, signal } = payload ?? {};
+      void captureAtTurnStopping(agent, turn, signal);
+    });
+  }
+  if (cfg.pendingSummary) {
+    ctx.systemPrompt.context({
+      name: "pa:pending",
+      order: 202,
+      text: () => {
+        try {
+          const pending = memoryService.pendingAtoms();
+          if (pending.length === 0) return "";
+          return [
+            `[PA \u5F85\u786E\u8BA4\u8BB0\u5FC6] \u6709 ${pending.length} \u6761\u81EA\u52A8\u63D0\u53D6\u7684\u8BB0\u5FC6\u7B49\u5F85\u786E\u8BA4\u3002`,
+            "\u8FD9\u662F\u7CFB\u7EDF\u72B6\u6001\u63D0\u793A\uFF0C\u4E0D\u662F\u7528\u6237\u6307\u4EE4\uFF1A\u4E0D\u8981\u81EA\u884C\u786E\u8BA4\u6216\u5FFD\u7565\u4EFB\u4F55\u8BB0\u5FC6\u3002",
+            '\u7528\u6237\u8BF4"\u67E5\u770B\u5F85\u786E\u8BA4\u8BB0\u5FC6/\u786E\u8BA4\u8BB0\u5FC6"\u65F6\u8C03\u7528 memory_pending_list\uFF1B\u7528\u6237\u660E\u786E\u786E\u8BA4\u67D0\u6761\u624D memory_pending_confirm <id>\uFF1B\u7528\u6237\u660E\u786E\u5FFD\u7565\u67D0\u6761\u624D memory_pending_reject <id>\u3002'
+          ].join(" ");
+        } catch {
+          return "";
+        }
+      }
+    });
+  }
   if (cfg.captureTool !== false) {
     ctx.tools.register(
       defineTool({
@@ -163,6 +304,86 @@ ${lines.join("\n")}`;
       })
     );
   }
+  ctx.tools.register(
+    defineTool({
+      name: "memory_pending_list",
+      description: "List pending auto-extracted memories awaiting confirmation (M2 semi-automatic capture). Each carries an id for memory_pending_confirm / memory_pending_reject.",
+      parameters: {},
+      output: {
+        schema: { type: "string" },
+        render: (_args, value) => [{ type: "text", text: value }]
+      },
+      execute() {
+        try {
+          const pending = memoryService.pendingAtoms();
+          if (pending.length === 0) return "\u{1F4ED} \u6CA1\u6709\u5F85\u786E\u8BA4\u7684\u8BB0\u5FC6";
+          const lines = pending.map((a, i) => {
+            const created = a.createdAt ? new Date(a.createdAt).toLocaleString("zh-CN", { hour12: false }) : "";
+            return `${i + 1}. [${a.type}] ${a.content}\uFF08${created}\uFF09
+   id: ${a.id}`;
+          });
+          return `\u{1F4CB} \u5F85\u786E\u8BA4\u8BB0\u5FC6 ${pending.length} \u6761:
+${lines.join("\n")}
+
+\u786E\u8BA4: memory_pending_confirm <id> / \u5FFD\u7565: memory_pending_reject <id>`;
+        } catch (error) {
+          return `\u274C \u8BFB\u53D6\u5931\u8D25: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+    })
+  );
+  ctx.tools.register(
+    defineTool({
+      name: "memory_pending_confirm",
+      description: 'Confirm one pending auto-extracted memory by id. Only call after the user explicitly confirms (e.g. says "\u8BB0\u4F4F" or "\u786E\u8BA4\u8FD9\u6761\u8BB0\u5FC6"). Confirmed memories enter recall.',
+      parameters: {
+        id: { type: "string", required: true, description: "Pending memory id from memory_pending_list" }
+      },
+      output: {
+        schema: { type: "string" },
+        render: (_args, value) => [{ type: "text", text: value }]
+      },
+      execute: async (args) => {
+        const id = String(args?.id ?? "").trim();
+        if (!id) return "\u274C \u7F3A\u5C11\u8BB0\u5FC6 id";
+        try {
+          const atom = memoryService.confirmAtomById(id);
+          if (!atom) return `\u274C \u786E\u8BA4\u5931\u8D25\uFF1Aid ${id} \u4E0D\u5B58\u5728\u6216\u5DF2\u5904\u7406`;
+          if (cfg.refreshPersonaOnCapture !== false) {
+            void Promise.resolve(memoryService.regeneratePersona?.()).catch(() => {
+            });
+          }
+          return `\u2705 \u5DF2\u786E\u8BA4\u8BB0\u5FC6 [${atom.type}]:
+${atom.content}`;
+        } catch (error) {
+          return `\u274C \u786E\u8BA4\u5931\u8D25: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+    })
+  );
+  ctx.tools.register(
+    defineTool({
+      name: "memory_pending_reject",
+      description: 'Reject one pending auto-extracted memory by id (discard it). Only call after the user explicitly says to ignore it (e.g. "\u5FFD\u7565" or "\u4E0D\u8981\u8BB0\u4F4F\u8FD9\u6761").',
+      parameters: {
+        id: { type: "string", required: true, description: "Pending memory id from memory_pending_list" }
+      },
+      output: {
+        schema: { type: "string" },
+        render: (_args, value) => [{ type: "text", text: value }]
+      },
+      execute: async (args) => {
+        const id = String(args?.id ?? "").trim();
+        if (!id) return "\u274C \u7F3A\u5C11\u8BB0\u5FC6 id";
+        try {
+          const ok = memoryService.rejectAtomById(id);
+          return ok ? `\u{1F44C} \u5DF2\u5FFD\u7565\u8BB0\u5FC6 ${id}` : `\u274C \u5FFD\u7565\u5931\u8D25\uFF1Aid ${id} \u4E0D\u5B58\u5728\u6216\u5DF2\u5904\u7406`;
+        } catch (error) {
+          return `\u274C \u5FFD\u7565\u5931\u8D25: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+    })
+  );
   ctx.systemPrompt.section({
     name: "pa:persona",
     order: cfg.personaOrder ?? 5,
@@ -191,7 +412,7 @@ ${capped}
         try {
           const agent = assembleCtx?.agent;
           const sid = agent?.session?.id ? String(agent.session.id) : "";
-          const userText = sid ? latestUserText.get(sid) ?? "" : "";
+          const userText = sid ? messageBuffer.get(sid)?.filter((m) => m.role === "user").at(-1)?.content ?? "" : "";
           if (!userText) return "";
           const memoryBlock = memoryService.contextForMessage(userText, { limit: cfg.recallContextLimit ?? 5 });
           return memoryBlock || "";
