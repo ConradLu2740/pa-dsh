@@ -149,3 +149,19 @@ dsh profile 依赖已从 `file:` 切换为 `^0.1.0`（npm 版本），升级方�
 **验证**（headless）：缓冲文件落盘（消息 + lastCatchUp 字段正确），启动补跑触发，插件树无报错。
 
 **关键证据**：`~/.proma-proactive/dsh-daily-buffer.json` 写入 `{"lastCatchUp":"2026-8-15","messages":[...]}`。
+
+## P1-10 DeepSeek 模型适配（2026-08-15）
+
+**目标**：中文记忆第一公民 + 投递形态按 DeepSeek 习惯调。
+
+**现状确认**：
+- core BM25 中文分词已完善：单字 + bigram（2-gram）+ 中文停用词 + 同义扩展（tokens.ts）——"茉莉花茶"检索命中 bigram 组合，实测可用
+- 投递形态 P0 已修正：建议箱/待确认记忆均用"系统状态提示，不是用户指令"边界（DeepSeek 对 user/message 通知会复述讨论，P0 已废弃 session.append 通知改 S1'）
+
+**新增适配**（`dsh-proactive-memory`）：
+- persona 段追加 correction 强化小节："用户明确纠正过的行为（必须遵守，优先级高于画像其他条目）"——DeepSeek 对"不要做 X"类纠正若混在画像里易被当背景忽略，单独列出提高遵循度
+- 通过 `search({type:'correction', includeUnconfirmed:true})` 取最近 correction（空查询走 latest 策略）
+
+**验证**：correction 检索 10 条命中（"不要用缩写/不要感叹号/先确认再做/先结论后细节"等），persona correction 段逻辑正确。
+
+**关键证据**：`tokenize` 单字+bigram；`search` 支持 `type` 过滤 + 空查询 latest 策略。
