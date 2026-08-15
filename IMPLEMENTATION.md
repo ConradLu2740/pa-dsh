@@ -136,3 +136,16 @@ dsh profile 依赖已从 `file:` 切换为 `^0.1.0`（npm 版本），升级方�
 - core `setActionExecutorProvider(() => HostActionExecutor | null)`，`HostActionExecutor` = `createAutomation({title,prompt,cron?,dueAt?})` + `createTodo({title,notes?,dueAt?})` → `{ok, refId?, message}`
 - `handleSuggestionFeedback` 检测到 executor 则真实创建，否则降级指令文本（provider.d.ts）
 - dsh `schedule_create`（模型工具，durable reminder）；`todo_write`（whole-list replacement，session todo/write 事件）
+
+## P1-8 pa-daily 改造（2026-08-15）
+
+**目标**：daily 的 24h 缓冲重启不丢 + 错过定时后补跑（外部调度兜底）。
+
+**实现**（`dsh-proactive-daily`）：
+- 缓冲落盘：24h 消息缓冲持久化到 `~/.proma-proactive/dsh-daily-buffer.json`（格式 `{messages, lastCatchUp}`，兼容旧纯数组），每次 push 增量落盘，启动时恢复
+- 启动补跑：若今日已过 dailyAt 5 分钟以上且今天未补跑过，启动时补做一次 timer 评估（lastCatchUp 防同日重复）
+- jobs 异步：评估本身异步（不阻塞插件加载）；未采用 ctx.jobs（无 owner 的全局缓冲不适合 job 模型，保留 timer + 落盘兜底）
+
+**验证**（headless）：缓冲文件落盘（消息 + lastCatchUp 字段正确），启动补跑触发，插件树无报错。
+
+**关键证据**：`~/.proma-proactive/dsh-daily-buffer.json` 写入 `{"lastCatchUp":"2026-8-15","messages":[...]}`。
