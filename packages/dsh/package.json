@@ -19,7 +19,8 @@
     "@proactive-agent/dsh-proactive-suggest": "^0.2.0",
     "@proactive-agent/dsh-proactive-injector": "^0.2.0",
     "@proactive-agent/dsh-proactive-daily": "^0.2.0",
-    "@proactive-agent/dsh-proactive-skills": "^0.2.0"
+    "@proactive-agent/dsh-proactive-skills": "^0.2.0",
+    "@proactive-agent/dsh-proactive-ui": "^0.3.0"
   },
   "keywords": [
     "dsh",
