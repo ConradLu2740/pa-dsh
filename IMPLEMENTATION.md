@@ -165,3 +165,23 @@ dsh profile 依赖已从 `file:` 切换为 `^0.1.0`（npm 版本），升级方�
 **验证**：correction 检索 10 条命中（"不要用缩写/不要感叹号/先确认再做/先结论后细节"等），persona correction 段逻辑正确。
 
 **关键证据**：`tokenize` 单字+bigram；`search` 支持 `type` 过滤 + 空查询 latest 策略。
+
+## P1-11 S2b turnTail 客户端卡片原型（2026-08-15）
+
+**目标**：最小可用版本验证 dsh 客户端 slot 机制全链路（小步试水，不投入精致 UI）。
+
+**实现**（新包 `@proactive-agent/dsh-proactive-ui`）：
+- `package.json`：`exports["./client"]` + `dsh.client = { inject: [client deps], platform: 'web' }`（client-modules 扫描并注入 web boot manifest）
+- `lib/client.js`：`window.__ModuleLoader__.load({id, factory})` 注册（官方 bundle 格式）+ `conversationEvents.register` 收集 turn 数据 + `slots.inject('conversation.chat.turnTail')` 渲染 PA 状态卡片
+- 原型卡片：turn 结束后助手消息下方显示"PA 记忆/建议状态（S2b 原型）· turn N · seq M"
+- 不注册自定义事件（rc.6 第三方事件注册面受限，S2a 已知）：只用官方事件（turn/start、assistant/message）驱动
+
+**验证**：
+- boot manifest 注入 ✅ `{"id":"@proactive-agent/dsh-proactive-ui","url":"/plugins/.../client.js"}`
+- bundle 可达 ✅ HTTP 200，含 apply/inject
+- ModuleLoader 注册修复 ✅（首版未注册报错 → 加 __ModuleLoader__.load 后插件加载错误消失）
+- 卡片实际渲染受 #1473 损坏会话阻塞（UI 无法开新会话），机制链路已验证
+
+**关键证据**：官方 `dsh-client-ui-deliverables` 的 turnTail 实现（`conversationEvents.register` + `slots.inject('conversation.chat.turnTail', ...)` + `select(owner)` 决定挂载）；`dsh-client-modules` 扫描 `dsh.client` 声明注入 boot manifest。
+
+**部署方式**：新包装进 profile（file: 链接 → node_modules），cordis.patch.yml 追加 pa-ui 行；正式发布走 npm。
