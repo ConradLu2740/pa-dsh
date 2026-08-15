@@ -394,15 +394,34 @@ ${atom.content}`;
     text: () => {
       try {
         const personaText = memoryService.personaRaw("auto");
-        if (!personaText) return "";
+        let correctionsSection = "";
+        try {
+          const corrections = memoryService.search({
+            query: "",
+            type: "correction",
+            limit: 10,
+            scope: "auto",
+            includeUnconfirmed: true
+          });
+          const items = corrections?.hits?.map((h) => h.atom?.content).filter(Boolean);
+          if (items && items.length > 0) {
+            correctionsSection = `
+
+# \u7528\u6237\u660E\u786E\u7EA0\u6B63\u8FC7\u7684\u884C\u4E3A\uFF08\u5FC5\u987B\u9075\u5B88\uFF0C\u4F18\u5148\u7EA7\u9AD8\u4E8E\u753B\u50CF\u5176\u4ED6\u6761\u76EE\uFF09
+
+${items.map((s) => `- ${s}`).join("\n")}`;
+          }
+        } catch {
+        }
         const max = Math.max(0, cfg.personaMaxChars ?? 3e3);
-        const capped = personaText.length > max ? `${personaText.slice(0, max)}
-\u2026\uFF08\u753B\u50CF\u8FC7\u957F\u5DF2\u622A\u65AD\uFF0C\u5B8C\u6574\u753B\u50CF\u53EF\u7528 memory_stats \u67E5\u770B\uFF09` : personaText;
-        return `# \u7528\u6237\u753B\u50CF\uFF08ProactiveAgent \u957F\u671F\u8BB0\u5FC6\uFF09
+        const base = personaText ? `# \u7528\u6237\u753B\u50CF\uFF08ProactiveAgent \u957F\u671F\u8BB0\u5FC6\uFF09
 
-${capped}
-
-\u4EE5\u4E0A\u753B\u50CF\u6765\u81EA\u8DE8\u5DE5\u5177\u5171\u4EAB\u7684\u957F\u671F\u8BB0\u5FC6\u5E93\uFF0C\u4F9B\u4F60\u7406\u89E3\u7528\u6237\u504F\u597D\u65F6\u53C2\u8003\uFF1B\u82E5\u753B\u50CF\u4E0E\u7528\u6237\u5F53\u524D\u8BF4\u6CD5\u51B2\u7A81\uFF0C\u4EE5\u7528\u6237\u5F53\u524D\u8BF4\u6CD5\u4E3A\u51C6\u3002`;
+${personaText}` : "";
+        const capped = base.length > max ? `${base.slice(0, max)}
+\u2026\uFF08\u753B\u50CF\u8FC7\u957F\u5DF2\u622A\u65AD\uFF0C\u5B8C\u6574\u753B\u50CF\u53EF\u7528 memory_stats \u67E5\u770B\uFF09` : base;
+        if (!capped && !correctionsSection) return "";
+        const disclaimer = "\n\n\u4EE5\u4E0A\u6765\u81EA\u8DE8\u5DE5\u5177\u5171\u4EAB\u7684\u957F\u671F\u8BB0\u5FC6\u5E93\uFF0C\u4F9B\u4F60\u7406\u89E3\u7528\u6237\u504F\u597D\u65F6\u53C2\u8003\uFF1B\u82E5\u4E0E\u7528\u6237\u5F53\u524D\u8BF4\u6CD5\u51B2\u7A81\uFF0C\u4EE5\u7528\u6237\u5F53\u524D\u8BF4\u6CD5\u4E3A\u51C6\u3002";
+        return `${capped}${correctionsSection}${disclaimer}`;
       } catch {
         return "";
       }

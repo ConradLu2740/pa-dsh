@@ -493,10 +493,33 @@ export function apply(ctx: Context, config: PluginConfig) {
     text: () => {
       try {
         const personaText = memoryService.personaRaw('auto')
-        if (!personaText) return ''
+        // P1-10 DeepSeek 适配：correction 类型单独强调——DeepSeek 对"不要做 X"
+        // 类纠正若只混在画像里容易被当背景忽略；单独列出提高遵循度
+        let correctionsSection = ''
+        try {
+          const corrections = memoryService.search({
+            query: '',
+            type: 'correction',
+            limit: 10,
+            scope: 'auto',
+            includeUnconfirmed: true,
+          })
+          const items = corrections?.hits?.map((h: any) => h.atom?.content).filter(Boolean)
+          if (items && items.length > 0) {
+            correctionsSection = `\n\n# 用户明确纠正过的行为（必须遵守，优先级高于画像其他条目）\n\n${items.map((s: string) => `- ${s}`).join('\n')}`
+          }
+        } catch {
+          // 忽略 correction 段失败（不影响主画像）
+        }
         const max = Math.max(0, cfg.personaMaxChars ?? 3000)
-        const capped = personaText.length > max ? `${personaText.slice(0, max)}\n…（画像过长已截断，完整画像可用 memory_stats 查看）` : personaText
-        return `# 用户画像（ProactiveAgent 长期记忆）\n\n${capped}\n\n以上画像来自跨工具共享的长期记忆库，供你理解用户偏好时参考；若画像与用户当前说法冲突，以用户当前说法为准。`
+        const base = personaText ? `# 用户画像（ProactiveAgent 长期记忆）\n\n${personaText}` : ''
+        const capped =
+          base.length > max
+            ? `${base.slice(0, max)}\n…（画像过长已截断，完整画像可用 memory_stats 查看）`
+            : base
+        if (!capped && !correctionsSection) return ''
+        const disclaimer = '\n\n以上来自跨工具共享的长期记忆库，供你理解用户偏好时参考；若与用户当前说法冲突，以用户当前说法为准。'
+        return `${capped}${correctionsSection}${disclaimer}`
       } catch {
         return ''
       }
