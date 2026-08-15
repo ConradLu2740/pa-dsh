@@ -4453,12 +4453,49 @@ init_ttl();
 
 // packages/dsh-proactive-core/src/plugin.ts
 var name = "proactive-core";
-var Config = z.object({});
-function apply(ctx) {
+var inject = [];
+var Config = z.object({
+  /** 是否把 dsh 宿主凭据桥接为 MEMORY_LLM_*（core 提取/分析用）；显式 env 优先 */
+  bridgeLlmCredentials: z.boolean().default(true),
+  /** 桥接来源 ref（默认 DEEPSEEK_API_KEY，dsh 模型路由的标准凭据） */
+  llmApiKeyRef: z.string().default("DEEPSEEK_API_KEY"),
+  /** 桥接 baseUrl（dsh 官方 DeepSeek 兼容端点；留空则不覆盖 MEMORY_LLM_BASE_URL） */
+  llmBaseUrl: z.string().default(""),
+  /** 桥接 model（留空则不覆盖 MEMORY_LLM_MODEL，此时需宿主侧有默认路由） */
+  llmModel: z.string().default("")
+});
+function apply(ctx, config) {
+  const cfg = { ...config };
   ctx.provide("paCore", { memoryService: service_exports2, suggestService: service_exports });
+  if (cfg.bridgeLlmCredentials !== false) {
+    const apiKeyRef = cfg.llmApiKeyRef || "DEEPSEEK_API_KEY";
+    void (async () => {
+      try {
+        if (process.env.MEMORY_LLM_API_KEY) return;
+        const creds = ctx.credentials;
+        if (!creds?.resolve) return;
+        const resolved = await creds.resolve(apiKeyRef);
+        if (resolved?.value) {
+          process.env.MEMORY_LLM_API_KEY = resolved.value;
+          ctx.logger?.info?.(`[proactive-core] LLM \u51ED\u636E\u6865\u63A5: ${apiKeyRef} \u2192 MEMORY_LLM_API_KEY\uFF08\u8BB0\u5FC6\u63D0\u53D6/\u5206\u6790\u542F\u7528 LLM \u6A21\u5F0F\uFF09`);
+          if (cfg.llmBaseUrl && !process.env.MEMORY_LLM_BASE_URL) {
+            process.env.MEMORY_LLM_BASE_URL = cfg.llmBaseUrl;
+          }
+          if (cfg.llmModel && !process.env.MEMORY_LLM_MODEL) {
+            process.env.MEMORY_LLM_MODEL = cfg.llmModel;
+          }
+        } else {
+          ctx.logger?.info?.("[proactive-core] \u672A\u627E\u5230\u5BBF\u4E3B LLM \u51ED\u636E\uFF0C\u8BB0\u5FC6\u63D0\u53D6\u4FDD\u6301 rule \u964D\u7EA7\u6A21\u5F0F");
+        }
+      } catch (error) {
+        ctx.logger?.warn?.("[proactive-core] LLM \u51ED\u636E\u6865\u63A5\u5931\u8D25\uFF08\u4E0D\u5F71\u54CD\u5F15\u64CE\u542F\u52A8\uFF09:", error instanceof Error ? error.message : error);
+      }
+    })();
+  }
 }
 export {
   Config,
   apply,
+  inject,
   name
 };

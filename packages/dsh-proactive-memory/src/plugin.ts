@@ -192,9 +192,10 @@ export function apply(ctx: Context, config: PluginConfig) {
       // 节流：每 N 轮一次
       const lastTurn = lastCaptureTurn.get(sid)
       if (lastTurn !== undefined && turn - lastTurn < (cfg.captureIntervalTurns ?? 3)) return
-      // pending 未清时不重复捕获（避免堆积 + 重复弹窗）
+      // pending 未清时不重复弹窗（防堆积 + 重复打扰），但仍继续提取——
+      // 新提取的候选与旧 pending 一起等用户确认，避免 pending 堆积永久阻塞捕获
       const existing = memoryService.pendingAtoms()
-      if (existing.length >= (cfg.askMaxItems ?? 3)) return
+      const pendingBlocked = existing.length >= (cfg.askMaxItems ?? 3)
       const msgs = messageBuffer.get(sid) ?? []
       if (msgs.length < 2) return
       lastCaptureTurn.set(sid, turn)
@@ -218,6 +219,12 @@ export function apply(ctx: Context, config: PluginConfig) {
       const pending = memoryService.pendingAtoms()
       const fresh = pending.slice(0, cfg.askMaxItems ?? 3)
       if (fresh.length === 0) return
+
+      // pending 已堆积：本次只静默入队，不再弹窗打扰（下次用户主动确认时一并处理）
+      if (pendingBlocked) {
+        console.log(`[Memory] M2 提取 ${fresh.length} 条候选（pending 已满 ${existing.length} 条，静默入队待确认，${sid}）`)
+        return
+      }
 
       const handled = await confirmViaAsk(agent, fresh, signal)
       if (!handled) {

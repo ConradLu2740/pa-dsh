@@ -97,3 +97,26 @@ dsh profile 依赖已从 `file:` 切换为 `^0.1.0`（npm 版本），升级方�
 - `agent/turn-stopping` payload `{agent, turn, signal}`（runtime-types.ts:278）
 - `ctx.userQuestions.ask({questions, agent, signal})`（dsh-user-questions），web provider 由 `dsh-host-apiproxy` 注册，UI 由 `dsh-client-ui-user-questions` 渲染
 - `extractAndCapture(messages, {sessionId})` → captureCandidates `{confirmed:false}`（engine 侧 pending 语义）
+
+## P1-S3 LLM 接线（2026-08-15）
+
+**目标**：记忆提取/分析用上 LLM（rule 模式抓不住隐含语义），双路径（dsh 宿主凭据桥接 + MEMORY_LLM_* 显式 env）。
+
+**实现**（`dsh-proactive-core`）：
+- 启动时探测 `ctx.credentials.resolve('DEEPSEEK_API_KEY')`，未显式配置 `MEMORY_LLM_API_KEY` 时桥接为 env（core 每次调用读 env，立即生效）
+- 可选配置：llmBaseUrl / llmModel（默认 core 侧 `https://api.deepseek.com/v1` + `deepseek-chat`）
+- 不 inject credentials：headless/无凭据服务时不阻塞插件树（可选探测）
+
+**护栏修复**（`dsh-proactive-memory`）：
+- 原 pending 满（≥askMaxItems）时完全跳过捕获 → pending 堆积永久阻塞
+- 修复：pending 满时仍提取、静默入队（不弹窗），用户确认时一并处理
+
+**验证**（headless 端到端）：
+- 无 MEMORY_LLM_* → `mode=rule`（匹配"记住/以后"等显式信号）
+- 注入 MEMORY_LLM_API_KEY（= bridge 生效态）→ `mode=llm`，提取隐含事实"用户正在研究边缘计算，使用 WebAssembly 做轻量推理"（rule 抓不住），pending `confirmed:false`
+- pending 满护栏：`1 条新增, 2 条纠正` + 静默入队日志，不再阻塞
+
+**关键证据**：
+- `ctx.credentials.resolve(ref)` → `{value, source}`（dsh-credentials，per-call 读取）
+- core `getMemoryLlmConfig()` 每次调用读 env + .env（非缓存，bridge 即时生效）
+- `extractFromConversation`：`mode_==='llm' && isMemoryLlmConfigured()` → LLM 提取，失败降级 rule

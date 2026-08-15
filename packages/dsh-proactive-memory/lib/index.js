@@ -130,7 +130,7 @@ function apply(ctx, config) {
       const lastTurn = lastCaptureTurn.get(sid);
       if (lastTurn !== void 0 && turn - lastTurn < (cfg.captureIntervalTurns ?? 3)) return;
       const existing = memoryService.pendingAtoms();
-      if (existing.length >= (cfg.askMaxItems ?? 3)) return;
+      const pendingBlocked = existing.length >= (cfg.askMaxItems ?? 3);
       const msgs = messageBuffer.get(sid) ?? [];
       if (msgs.length < 2) return;
       lastCaptureTurn.set(sid, turn);
@@ -150,6 +150,10 @@ function apply(ctx, config) {
       const pending = memoryService.pendingAtoms();
       const fresh = pending.slice(0, cfg.askMaxItems ?? 3);
       if (fresh.length === 0) return;
+      if (pendingBlocked) {
+        console.log(`[Memory] M2 \u63D0\u53D6 ${fresh.length} \u6761\u5019\u9009\uFF08pending \u5DF2\u6EE1 ${existing.length} \u6761\uFF0C\u9759\u9ED8\u5165\u961F\u5F85\u786E\u8BA4\uFF0C${sid}\uFF09`);
+        return;
+      }
       const handled = await confirmViaAsk(agent, fresh, signal);
       if (!handled) {
         console.log(`[Memory] M2 \u6355\u83B7 ${fresh.length} \u6761\u5019\u9009\u5F85\u786E\u8BA4\uFF08${result.mode} \u6A21\u5F0F\uFF0C${sid}\uFF09`);
