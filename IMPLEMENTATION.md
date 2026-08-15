@@ -120,3 +120,19 @@ dsh profile 依赖已从 `file:` 切换为 `^0.1.0`（npm 版本），升级方�
 - `ctx.credentials.resolve(ref)` → `{value, source}`（dsh-credentials，per-call 读取）
 - core `getMemoryLlmConfig()` 每次调用读 env + .env（非缓存，bridge 即时生效）
 - `extractFromConversation`：`mode_==='llm' && isMemoryLlmConfigured()` → LLM 提取，失败降级 rule
+
+## P1-S4 automation 落地（2026-08-15）
+
+**目标**：`setActionExecutorProvider` 注入宿主动作执行器——建议 accept 时提醒/待办有真实落地方向（非纯指令降级）。
+
+**实现**（`dsh-proactive-core`）：
+- 注入 executor：`createAutomation` → 引导模型调 dsh `schedule_create`（after_seconds/at/every_seconds）；`createTodo` → 引导模型调 `todo_write`（UI 渲染 checklist）
+- 不编程式直调：dsh-schedule 无对外服务 API（纯模型工具），todo_write 是整表替换语义（插件直写会覆盖模型已有 todo）——尊重 dsh 工具边界，保持最小侵入
+- 配置开关 actionExecutor（默认 true）
+
+**验证**：headless 插件树完整加载无异常（executor 注入 try/catch 包裹，不影响引擎启动）。
+
+**关键证据**：
+- core `setActionExecutorProvider(() => HostActionExecutor | null)`，`HostActionExecutor` = `createAutomation({title,prompt,cron?,dueAt?})` + `createTodo({title,notes?,dueAt?})` → `{ok, refId?, message}`
+- `handleSuggestionFeedback` 检测到 executor 则真实创建，否则降级指令文本（provider.d.ts）
+- dsh `schedule_create`（模型工具，durable reminder）；`todo_write`（whole-list replacement，session todo/write 事件）

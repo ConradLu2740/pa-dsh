@@ -19,7 +19,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { memoryService, suggestService } from '@proactive-agent/core'
+import { memoryService, suggestService, setActionExecutorProvider } from '@proactive-agent/core'
 
 export const name = 'proactive-core'
 // 不 inject credentials：headless/无凭据服务时也不阻塞插件树（LLM 桥接改为可选探测）
@@ -34,6 +34,8 @@ export const Config = z.object({
   llmBaseUrl: z.string().default(''),
   /** 桥接 model（留空则不覆盖 MEMORY_LLM_MODEL，此时需宿主侧有默认路由） */
   llmModel: z.string().default(''),
+  /** 是否注入宿主动作执行器（S4：提醒/待办建议的落地方向）；不注入则降级为指令文本 */
+  actionExecutor: z.boolean().default(true),
 })
 
 /** 暴露给其他插件的 PA core API 面 */
@@ -52,6 +54,47 @@ export function apply(ctx: Context, config: PluginConfig) {
   const cfg = { ...config }
 
   // 先同步提供 paCore 服务（其余插件依赖它，不能等异步）
+  // ===== S4 宿主动作执行器注入 =====
+  // dsh 的 schedule/todo 是模型工具（schedule_create / todo_write），无对外服务 API；
+  // todo_write 是整表替换语义，从插件直接 append 会覆盖模型已有 todo。
+  // 因此 executor 落地方向：提醒类 → 引导模型调 schedule_create；待办类 → 引导模型调 todo_write。
+  // 注入后 handleSuggestionFeedback 的 accept 反馈文本会带上执行指引（而非纯指令降级）。
+  if (cfg.actionExecutor !== false) {
+    try {
+      setActionExecutorProvider(() => ({
+        async createAutomation(input) {
+          const when = input.cron
+            ? `（cron: ${input.cron}）`
+            : input.dueAt
+              ? `（到期: ${new Date(input.dueAt).toLocaleString('zh-CN', { hour12: false })}）`
+              : ''
+          return {
+            ok: true,
+            message: [
+              `建议已登记为提醒（${input.title}${when}）。`,
+              `提醒内容: ${input.prompt}`,
+              '执行指引：请调用 dsh 的 schedule_create 工具创建持久提醒（after_seconds / at / every_seconds 三选一）。',
+            ].join('\n'),
+          }
+        },
+        async createTodo(input) {
+          return {
+            ok: true,
+            message: [
+              `建议已登记为待办：${input.title}`,
+              input.notes ? `备注: ${input.notes}` : '',
+              input.dueAt ? `到期: ${new Date(input.dueAt).toLocaleString('zh-CN', { hour12: false })}` : '',
+              '执行指引：请调用 dsh 的 todo_write 工具把这条待办加入当前会话的待办列表（UI 会渲染为 checklist）。',
+            ].join('\n'),
+          }
+        },
+      }))
+      ctx.logger?.info?.('[proactive-core] S4 宿主动作执行器已注入（提醒→schedule_create / 待办→todo_write）')
+    } catch (error) {
+      ctx.logger?.warn?.('[proactive-core] S4 动作执行器注入失败（不影响引擎启动）:', error instanceof Error ? error.message : error)
+    }
+  }
+
   ctx.provide('paCore', { memoryService, suggestService })
 
   // ===== S3 LLM 凭据桥接（异步探测，不阻塞插件树） =====

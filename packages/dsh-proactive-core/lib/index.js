@@ -3119,6 +3119,9 @@ function notifySuggestionsChangedProvider() {
   } catch {
   }
 }
+function setActionExecutorProvider(provider) {
+  actionExecutorProvider = provider;
+}
 function getActionExecutor() {
   try {
     return actionExecutorProvider?.() ?? null;
@@ -4462,10 +4465,43 @@ var Config = z.object({
   /** 桥接 baseUrl（dsh 官方 DeepSeek 兼容端点；留空则不覆盖 MEMORY_LLM_BASE_URL） */
   llmBaseUrl: z.string().default(""),
   /** 桥接 model（留空则不覆盖 MEMORY_LLM_MODEL，此时需宿主侧有默认路由） */
-  llmModel: z.string().default("")
+  llmModel: z.string().default(""),
+  /** 是否注入宿主动作执行器（S4：提醒/待办建议的落地方向）；不注入则降级为指令文本 */
+  actionExecutor: z.boolean().default(true)
 });
 function apply(ctx, config) {
   const cfg = { ...config };
+  if (cfg.actionExecutor !== false) {
+    try {
+      setActionExecutorProvider(() => ({
+        async createAutomation(input) {
+          const when = input.cron ? `\uFF08cron: ${input.cron}\uFF09` : input.dueAt ? `\uFF08\u5230\u671F: ${new Date(input.dueAt).toLocaleString("zh-CN", { hour12: false })}\uFF09` : "";
+          return {
+            ok: true,
+            message: [
+              `\u5EFA\u8BAE\u5DF2\u767B\u8BB0\u4E3A\u63D0\u9192\uFF08${input.title}${when}\uFF09\u3002`,
+              `\u63D0\u9192\u5185\u5BB9: ${input.prompt}`,
+              "\u6267\u884C\u6307\u5F15\uFF1A\u8BF7\u8C03\u7528 dsh \u7684 schedule_create \u5DE5\u5177\u521B\u5EFA\u6301\u4E45\u63D0\u9192\uFF08after_seconds / at / every_seconds \u4E09\u9009\u4E00\uFF09\u3002"
+            ].join("\n")
+          };
+        },
+        async createTodo(input) {
+          return {
+            ok: true,
+            message: [
+              `\u5EFA\u8BAE\u5DF2\u767B\u8BB0\u4E3A\u5F85\u529E\uFF1A${input.title}`,
+              input.notes ? `\u5907\u6CE8: ${input.notes}` : "",
+              input.dueAt ? `\u5230\u671F: ${new Date(input.dueAt).toLocaleString("zh-CN", { hour12: false })}` : "",
+              "\u6267\u884C\u6307\u5F15\uFF1A\u8BF7\u8C03\u7528 dsh \u7684 todo_write \u5DE5\u5177\u628A\u8FD9\u6761\u5F85\u529E\u52A0\u5165\u5F53\u524D\u4F1A\u8BDD\u7684\u5F85\u529E\u5217\u8868\uFF08UI \u4F1A\u6E32\u67D3\u4E3A checklist\uFF09\u3002"
+            ].join("\n")
+          };
+        }
+      }));
+      ctx.logger?.info?.("[proactive-core] S4 \u5BBF\u4E3B\u52A8\u4F5C\u6267\u884C\u5668\u5DF2\u6CE8\u5165\uFF08\u63D0\u9192\u2192schedule_create / \u5F85\u529E\u2192todo_write\uFF09");
+    } catch (error) {
+      ctx.logger?.warn?.("[proactive-core] S4 \u52A8\u4F5C\u6267\u884C\u5668\u6CE8\u5165\u5931\u8D25\uFF08\u4E0D\u5F71\u54CD\u5F15\u64CE\u542F\u52A8\uFF09:", error instanceof Error ? error.message : error);
+    }
+  }
   ctx.provide("paCore", { memoryService: service_exports2, suggestService: service_exports });
   if (cfg.bridgeLlmCredentials !== false) {
     const apiKeyRef = cfg.llmApiKeyRef || "DEEPSEEK_API_KEY";
