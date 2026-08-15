@@ -16,6 +16,10 @@
  * 兼容接口）。本插件启动时把 dsh 宿主凭据（ctx.credentials）桥接过去——
  * 若用户未显式配置 MEMORY_LLM_*，就用 dsh 已配置的模型凭据，让记忆提取
  * 直接复用宿主模型，无需单独配 key。双路径：显式 env 优先，桥接兜底。
+ *
+ * P1-9 公共服务化：paCore 服务面（memoryService + suggestService）为稳定
+ * API v1，第三方插件可 `ctx.get('paCore')` 读写记忆/订阅建议（见 README.md
+ * 接入指南）。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
