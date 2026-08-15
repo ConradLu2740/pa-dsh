@@ -32,3 +32,7 @@
       name: '@proactive-agent/dsh-proactive-skills'
       config:
         maxSkills: 10
+    # ProactiveAgent 客户端 UI（S2b 原型）：turnTail 记忆状态卡片（客户端插件，dsh.client 声明）
+    - id: pa-ui
+      name: '@proactive-agent/dsh-proactive-ui'
+      config: {}
