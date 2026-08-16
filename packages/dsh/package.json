@@ -1,6 +1,6 @@
 {
   "name": "@proactive-agent/dsh",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "ProactiveAgent × DeepSeek Harness 插件组：主动记忆 + 主动建议接入 DSH（bundle 聚合包，dsh plugin add 一键安装）",
   "type": "module",
   "main": "index.js",
@@ -14,13 +14,13 @@
     }
   },
   "peerDependencies": {
-    "@proactive-agent/dsh-proactive-core": "^0.2.0",
-    "@proactive-agent/dsh-proactive-memory": "^0.2.0",
-    "@proactive-agent/dsh-proactive-suggest": "^0.2.0",
-    "@proactive-agent/dsh-proactive-injector": "^0.2.0",
-    "@proactive-agent/dsh-proactive-daily": "^0.2.0",
-    "@proactive-agent/dsh-proactive-skills": "^0.2.0",
-    "@proactive-agent/dsh-proactive-ui": "^0.3.0"
+    "@proactive-agent/dsh-proactive-core": "^0.4.0",
+    "@proactive-agent/dsh-proactive-memory": "^0.4.0",
+    "@proactive-agent/dsh-proactive-suggest": "^0.4.0",
+    "@proactive-agent/dsh-proactive-injector": "^0.4.0",
+    "@proactive-agent/dsh-proactive-daily": "^0.4.0",
+    "@proactive-agent/dsh-proactive-skills": "^0.4.0",
+    "@proactive-agent/dsh-proactive-ui": "^0.5.0"
   },
   "keywords": [
     "dsh",

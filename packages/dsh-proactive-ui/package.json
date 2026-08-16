@@ -1,6 +1,6 @@
 {
   "name": "@proactive-agent/dsh-proactive-ui",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "description": "ProactiveAgent 客户端 UI：turnTail 记忆状态卡片（S2b 最小原型）",
   "type": "module",
   "main": "lib/index.js",
