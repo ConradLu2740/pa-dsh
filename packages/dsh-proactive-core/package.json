@@ -1,6 +1,6 @@
 {
   "name": "@proactive-agent/dsh-proactive-core",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "description": "PA core singleton host for DeepSeek Harness: provides memoryService/suggestService as cordis services",
   "type": "module",
   "main": "lib/index.js",
