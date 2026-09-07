@@ -35,5 +35,6 @@
     "dsh-plugin",
     "proactive-agent",
     "memory"
-  ]
+  ],
+  "license": "MIT"
 }
